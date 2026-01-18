@@ -3408,7 +3408,7 @@ function Library.Notification(message, notifType, duration)
 	notifType = notifType or "info"
 	duration = duration or 4
 	
-â	local typeConfigs = {
+	local typeConfigs = {
 		success = {
 			icon = "rbxassetid://11295279671",
 			color = Color3.fromRGB(46, 204, 113),
@@ -3445,7 +3445,7 @@ function Library.Notification(message, notifType, duration)
 	notificationInstance.Parent = notificationContainer
 	table.insert(activeNotifications, notification)
 	
-â	local slideInTween = TweenService:Create(
+	local slideInTween = TweenService:Create(
 		notificationInstance,
 		TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 		{Position = UDim2.new(1, -310, 1, -70)}
@@ -3454,7 +3454,7 @@ function Library.Notification(message, notifType, duration)
 	
 	updateNotificationPositions()
 	
-â	local progressTween = TweenService:Create(
+	local progressTween = TweenService:Create(
 		contentHolder.ProgressBar.ProgressBarInner,
 		TweenInfo.new(duration, Enum.EasingStyle.Linear),
 		{Size = UDim2.new(0, 0, 1, 0)}
@@ -3464,7 +3464,7 @@ function Library.Notification(message, notifType, duration)
 		progressTween:Play()
 	end)
 	
-â	task.delay(duration, function()
+	task.delay(duration, function()
 		notification:Dismiss()
 	end)
 	
