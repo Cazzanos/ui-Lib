@@ -3,7 +3,16 @@ if not _G.JxereasExistingHooks.GuiDetectionBypass then
     local CoreGui = game.CoreGui
     local ContentProvider = game.ContentProvider
     local RobloxGuis = {"RobloxGui", "TeleportGui", "RobloxPromptGui", "RobloxLoadingGui", "PlayerList", "RobloxNetworkPauseNotification", "PurchasePrompt", "HeadsetDisconnectedDialog", "ThemeProvider", "DevConsoleMaster"}
+
+    local hookfunc = hookfunction or hookfunc or replaceclosure
+    local hookmetamethod = hookmetamethod or hookmetamethods
     
+    if not hookfunc then
+        warn("Executor doesn't support function hooking - GUI detection bypass disabled")
+        _G.JxereasExistingHooks.GuiDetectionBypass = true
+        return
+    end
+
     local function FilterTable(tbl)
         local context = syn_context_get()
         syn_context_set(7)
