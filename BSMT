@@ -3752,12 +3752,254 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     return toggle
 end
 
--- Config Tab Builder
+-- ADD THIS TO THE CERBERUS LIBRARY AFTER THE NOTIFICATION SYSTEM AND BEFORE 'return Library'
+
+-- Config System
+local configHandler = {}
+configHandler.__index = configHandler
+
+local currentGameId = tostring(game.PlaceId)
+local configFolder = "CerberusConfigs"
+local gameConfigFolder = configFolder .. "/" .. currentGameId
+
+-- Ensure folders exist
+if not isfolder then
+    warn("Executor doesn't support folder operations")
+end
+
+if isfolder and not isfolder(configFolder) then
+    makefolder(configFolder)
+end
+
+if isfolder and not isfolder(gameConfigFolder) then
+    makefolder(gameConfigFolder)
+end
+
+-- Config data storage
+_G.CerberusConfigData = _G.CerberusConfigData or {}
+
+function Library.SaveConfig(configName)
+    if not writefile then
+        if Library.Notification then
+            Library.Notification("Executor doesn't support file saving", "error", 4)
+        end
+        return false
+    end
+    
+    configName = configName or "default"
+    local configPath = gameConfigFolder .. "/" .. configName .. ".cfg"
+    
+    local configData = {}
+    for identifier, value in pairs(_G.CerberusConfigData) do
+        configData[identifier] = value
+    end
+    
+    local success, err = pcall(function()
+        writefile(configPath, game:GetService("HttpService"):JSONEncode(configData))
+    end)
+    
+    if success then
+        if Library.Notification then
+            Library.Notification("Config '" .. configName .. "' saved!", "success", 3)
+        end
+        return true
+    else
+        if Library.Notification then
+            Library.Notification("Failed to save: " .. tostring(err), "error", 4)
+        end
+        return false
+    end
+end
+
+function Library.LoadConfig(configName)
+    if not readfile or not isfile then
+        if Library.Notification then
+            Library.Notification("Executor doesn't support file reading", "error", 4)
+        end
+        return false
+    end
+    
+    configName = configName or "default"
+    local configPath = gameConfigFolder .. "/" .. configName .. ".cfg"
+    
+    if not isfile(configPath) then
+        if Library.Notification then
+            Library.Notification("Config '" .. configName .. "' not found", "warning", 3)
+        end
+        return false
+    end
+    
+    local success, result = pcall(function()
+        local fileContent = readfile(configPath)
+        return game:GetService("HttpService"):JSONDecode(fileContent)
+    end)
+    
+    if success and result then
+        for identifier, value in pairs(result) do
+            _G.CerberusConfigData[identifier] = value
+        end
+        
+        if Library.Notification then
+            Library.Notification("Config '" .. configName .. "' loaded!", "success", 3)
+        end
+        return true
+    else
+        if Library.Notification then
+            Library.Notification("Failed to load config", "error", 4)
+        end
+        return false
+    end
+end
+
+function Library.DeleteConfig(configName)
+    if not delfile or not isfile then
+        if Library.Notification then
+            Library.Notification("Executor doesn't support file deletion", "error", 4)
+        end
+        return false
+    end
+    
+    local configPath = gameConfigFolder .. "/" .. configName .. ".cfg"
+    
+    if not isfile(configPath) then
+        if Library.Notification then
+            Library.Notification("Config '" .. configName .. "' not found", "warning", 3)
+        end
+        return false
+    end
+    
+    local success, err = pcall(function()
+        delfile(configPath)
+    end)
+    
+    if success then
+        if Library.Notification then
+            Library.Notification("Config '" .. configName .. "' deleted", "info", 3)
+        end
+        return true
+    else
+        if Library.Notification then
+            Library.Notification("Failed to delete config", "error", 4)
+        end
+        return false
+    end
+end
+
+function Library.GetConfigs()
+    if not listfiles or not isfolder then
+        return {}
+    end
+    
+    if not isfolder(gameConfigFolder) then
+        return {}
+    end
+    
+    local configs = {}
+    local success, files = pcall(function()
+        return listfiles(gameConfigFolder)
+    end)
+    
+    if success and files then
+        for _, filePath in ipairs(files) do
+            local fileName = filePath:match("([^/\\]+)%.cfg$")
+            if fileName then
+                table.insert(configs, fileName)
+            end
+        end
+    end
+    
+    return configs
+end
+
+function Library.AutoLoadConfig(configName)
+    if not writefile or not readfile then return end
+    
+    local autoLoadPath = gameConfigFolder .. "/_autoload.txt"
+    pcall(function()
+        writefile(autoLoadPath, configName)
+    end)
+    
+    if Library.Notification then
+        Library.Notification("Auto-load set to '" .. configName .. "'", "success", 3)
+    end
+end
+
+function Library.GetAutoLoad()
+    if not readfile or not isfile then return nil end
+    
+    local autoLoadPath = gameConfigFolder .. "/_autoload.txt"
+    
+    if isfile(autoLoadPath) then
+        local success, result = pcall(function()
+            return readfile(autoLoadPath)
+        end)
+        
+        if success and result then
+            return result
+        end
+    end
+    
+    return nil
+end
+
+function toggleHandler:Set(bool, callback)
+    local tweenTime = .275
+    local cornerOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)})
+    local cornerOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)})
+    local imageRotationOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360})
+    local imageRotationOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0})
+    local imageSizeOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)})
+    local imageSizeOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)})
+    
+    if typeof(bool) ~= "boolean" then error("First argument must be a boolean.") end
+    
+    callback = callback or function() end
+    self.Enabled = bool
+    
+    if self.ConfigIdentifier then
+        _G.CerberusConfigData[self.ConfigIdentifier] = bool
+    end
+
+    if self.Enabled then
+        cornerOnTween:Play()
+        imageRotationOnTween:Play()
+        imageSizeOnTween:Play()
+    else
+        cornerOffTween:Play()
+        imageRotationOffTween:Play()
+        imageSizeOffTween:Play()
+    end
+
+    callback(bool)
+end
+
+local originalToggle = elementHandler.Toggle
+function elementHandler:Toggle(toggleName, callback, configIdentifier)
+    local toggle = originalToggle(self, toggleName, callback)
+    
+    toggle.ConfigIdentifier = configIdentifier or toggleName
+    
+    if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
+        toggle:Set(_G.CerberusConfigData[toggle.ConfigIdentifier])
+    end
+    
+    local originalCallback = callback or function() end
+    local newCallback = function(value)
+        _G.CerberusConfigData[toggle.ConfigIdentifier] = value
+        originalCallback(value)
+    end
+    
+    toggle.Instance.MouseButton1Click:Connect(function()
+        newCallback(toggle.Enabled)
+    end)
+    
+    return toggle
+end
+
 function windowHandler:ConfigTab()
-    local configTab = self:Tab("⚙️ Config", "rbxassetid://11295279671")
+    local configTab = self:Tab("Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
     
-    -- Config name input
     local configName = "MyConfig"
     configSection:TextBox("Config Name", function(text)
         configName = text
@@ -3765,45 +4007,34 @@ function windowHandler:ConfigTab()
     
     configSection:Title("Actions")
     
-    -- Save button
-    configSection:Button("💾 Save Config", function()
+    configSection:Button("Save Config", function()
         if configName and configName ~= "" then
             Library.SaveConfig(configName)
         else
-            if Library.Notification then
-                Library.Notification("Please enter a config name", "warning", 3)
-            end
+            Library.Notification("Please enter a config name", "warning", 3)
         end
     end)
     
-    -- Load button
-    configSection:Button("📂 Load Config", function()
+    configSection:Button("Load Config", function()
         if configName and configName ~= "" then
             Library.LoadConfig(configName)
         else
-            if Library.Notification then
-                Library.Notification("Please enter a config name", "warning", 3)
-            end
+            Library.Notification("Please enter a config name", "warning", 3)
         end
     end)
     
-    -- Delete button
-    configSection:Button("🗑️ Delete Config", function()
+    configSection:Button("Delete Config", function()
         if configName and configName ~= "" then
             Library.DeleteConfig(configName)
         else
-            if Library.Notification then
-                Library.Notification("Please enter a config name", "warning", 3)
-            end
+            Library.Notification("Please enter a config name", "warning", 3)
         end
     end)
     
     configSection:Title("Saved Configs")
     
-    -- List of configs
     local configList = configSection:Dropdown("Available Configs")
     
-    -- Refresh configs function
     local function refreshConfigs()
         -- Clear existing
         for _, child in ipairs(configList.ElementToParentChildren:GetChildren()) do
@@ -3812,15 +4043,12 @@ function windowHandler:ConfigTab()
             end
         end
         
-        -- Add configs
         local configs = Library.GetConfigs()
         for _, config in ipairs(configs) do
             configList:Button(config, function()
                 configName = config
                 configList:ChangeText(config)
-                if Library.Notification then
-                    Library.Notification("Selected: " .. config, "info", 2)
-                end
+                Library.Notification("Selected: " .. config, "info", 2)
             end)
         end
         
@@ -3831,14 +4059,12 @@ function windowHandler:ConfigTab()
     
     refreshConfigs()
     
-    -- Refresh button
-    configSection:Button("🔄 Refresh List", function()
+    configSection:Button("Refresh List", function()
         refreshConfigs()
     end)
     
     configSection:Title("Auto-Load")
     
-    -- Auto-load toggle
     local currentAutoLoad = Library.GetAutoLoad()
     configSection:Toggle("Enable Auto-Load", function(enabled)
         if enabled and configName and configName ~= "" then
@@ -3850,10 +4076,15 @@ function windowHandler:ConfigTab()
         configSection:Label("Current: " .. currentAutoLoad)
     end
     
+    configSection:Title("UI Settings")
+    
+    configSection:Keybind("UI Toggle Key", function()
+        -- This gets triggered when keybind is pressed
+    end, self.CurrentKeybind and self.CurrentKeybind.Name or "RightControl")
+    
     return configTab
 end
 
--- UI Toggle Keybind Enhancement
 function windowHandler:SetKeybind(keybind)
     local function getMatchingKeyCodeFromName(name)
         if not name then return end
@@ -3865,12 +4096,16 @@ function windowHandler:SetKeybind(keybind)
     end
     
     local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
+    self.CurrentKeybind = keyCode
     
     UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         if gameProcessedEvent then return end
         if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == keyCode then
-                self.Instance.Background.Visible = not self.Instance.Background.Visible
+            if input.KeyCode == self.CurrentKeybind then
+                local bg = self.Instance:FindFirstChild("Background")
+                if bg then
+                    bg.Visible = not bg.Visible
+                end
             end
         end
     end)
@@ -3887,5 +4122,4 @@ task.spawn(function()
         Library.LoadConfig(autoLoadConfig)
     end
 end)
-
 return Library
