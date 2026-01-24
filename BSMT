@@ -3505,12 +3505,11 @@ function notificationHandler:Dismiss()
 	end)
 end
 
--- Config System - COMPLETE REPLACEMENT
 _G.CerberusConfigData = _G.CerberusConfigData or {}
 _G.CerberusConfigElements = _G.CerberusConfigElements or {}
 
 local currentGameId = tostring(game.PlaceId)
-local configFolder = "CerberusConfigs"
+local configFolder = "BSMT_Configs"
 local gameConfigFolder = configFolder .. "/" .. currentGameId
 
 if isfolder and not isfolder(configFolder) then
@@ -3688,7 +3687,6 @@ function Library.GetAutoLoad()
     return nil
 end
 
--- REPLACE THE EXISTING elementHandler:Toggle FUNCTION WITH THIS
 function elementHandler:Toggle(toggleName, callback, configIdentifier)
     local toggle = setmetatable({}, toggleHandler)
     local toggleInstance = originalElements.Toggle:Clone()
@@ -3702,10 +3700,8 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggle.GuiToRemove = toggleInstance
     toggle.Enabled = false
     
-    -- Register element globally
     _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
     
-    -- Load initial state from config if exists
     if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
         toggle.Enabled = _G.CerberusConfigData[toggle.ConfigIdentifier]
     end
@@ -3716,14 +3712,11 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     
     callback = callback or function() end
     
-    -- Single click handler
     local function onToggleClick()
         toggle.Enabled = not toggle.Enabled
         
-        -- Save to config
         _G.CerberusConfigData[toggle.ConfigIdentifier] = toggle.Enabled
         
-        -- Visual update
         local tweenTime = .275
         if toggle.Enabled then
             TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
@@ -3746,7 +3739,6 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
     toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
     
-    -- Set initial visual state
     if toggle.Enabled then
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.Rotation = 360
@@ -3756,7 +3748,6 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     return toggle
 end
 
--- REPLACE windowHandler:SetKeybind WITH THIS
 function windowHandler:SetKeybind(keybind)
     local function getMatchingKeyCodeFromName(name)
         if not name then return end
@@ -3770,12 +3761,10 @@ function windowHandler:SetKeybind(keybind)
     local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
     self.CurrentKeybind = keyCode
     
-    -- Disconnect old connection if exists
     if self._keybindConnection then
         self._keybindConnection:Disconnect()
     end
     
-    -- Create new connection
     self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         if gameProcessedEvent then return end
         if input.UserInputType == Enum.UserInputType.Keyboard then
@@ -3793,9 +3782,8 @@ function windowHandler:SetKeybind(keybind)
     end
 end
 
--- Config Tab
 function windowHandler:ConfigTab()
-    local configTab = self:Tab("⚙️ Config", "rbxassetid://11295279671")
+    local configTab = self:Tab("Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
     
     local currentConfigName = "MyConfig"
@@ -3809,7 +3797,7 @@ function windowHandler:ConfigTab()
     
     configSection:Title("Actions")
     
-    configSection:Button("💾 Save Config", function()
+    configSection:Button("Save Config", function()
         if currentConfigName and currentConfigName ~= "" then
             local success = Library.SaveConfig(currentConfigName)
             if success then
@@ -3821,7 +3809,7 @@ function windowHandler:ConfigTab()
         end
     end)
     
-    configSection:Button("📂 Load Config", function()
+    configSection:Button("Load Config", function()
         if currentConfigName and currentConfigName ~= "" then
             Library.LoadConfig(currentConfigName)
         else
@@ -3829,7 +3817,7 @@ function windowHandler:ConfigTab()
         end
     end)
     
-    configSection:Button("🗑️ Delete Config", function()
+    configSection:Button("Delete Config", function()
         if currentConfigName and currentConfigName ~= "" then
             local success = Library.DeleteConfig(currentConfigName)
             if success then
@@ -3868,18 +3856,13 @@ function windowHandler:ConfigTab()
     
     refreshConfigs()
     
-    configSection:Button("🔄 Refresh List", function()
+    configSection:Button("Refresh List", function()
         refreshConfigs()
     end)
     
     return configTab
 end
 
--- Initialize CurrentKeybind in Library.new
--- ADD THIS LINE in the Library.new function after "window.IsHidden = false":
--- window.CurrentKeybind = Enum.KeyCode.RightShift
-
--- Auto-load on startup
 task.spawn(function()
     task.wait(1)
     local autoLoadConfig = Library.GetAutoLoad()
