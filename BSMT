@@ -3875,4 +3875,166 @@ task.spawn(function()
         Library.LoadConfig(autoLoadConfig)
     end
 end)
+
+function windowHandler:CreateMobileButton(imageId, forceCreate)
+    local UserInputService = game:GetService("UserInputService")
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    
+    if not forceCreate then
+        local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+        if not isMobile then
+            return nil -- Not mobile, don't create button
+        end
+    end
+    
+    local ToggleGui = Instance.new("ScreenGui")
+    local Toggle = Instance.new("ImageButton")
+    local UICorner = Instance.new("UICorner")
+    
+    ToggleGui.Name = "ToggleGui_Cerberus"
+    ToggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ToggleGui.IgnoreGuiInset = true
+    ToggleGui.ResetOnSpawn = false
+    ToggleGui.Parent = game:GetService("CoreGui")
+    
+    Toggle.Name = "Toggle"
+    Toggle.Parent = ToggleGui
+    Toggle.BackgroundColor3 = Color3.fromRGB(40, 41, 52)
+    Toggle.BackgroundTransparency = 0.3
+    Toggle.Position = UDim2.new(0, 20, 0.4, 0)
+    Toggle.Size = UDim2.new(0, 60, 0, 60)
+    Toggle.Image = imageId or "rbxassetid://11435586663"
+    Toggle.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    Toggle.Draggable = true
+    Toggle.Active = true
+    Toggle.AutoButtonColor = true
+    Toggle.Visible = true
+    
+    UICorner.CornerRadius = UDim.new(0.25, 0)
+    UICorner.Parent = Toggle
+    
+    local function updatePosition()
+        local viewportSize = workspace.CurrentCamera.ViewportSize
+        local pos = Toggle.AbsolutePosition
+        local size = Toggle.AbsoluteSize
+        
+        local newX = math.clamp(pos.X, 0, viewportSize.X - size.X)
+        local newY = math.clamp(pos.Y, 0, viewportSize.Y - size.Y)
+        
+        Toggle.Position = UDim2.new(0, newX, 0, newY)
+    end
+    
+    Toggle:GetPropertyChangedSignal("AbsolutePosition"):Connect(updatePosition)
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updatePosition)
+    
+    Toggle.MouseButton1Click:Connect(function()
+        local bg = self.Instance:FindFirstChild("Background")
+        if bg then
+            bg.Visible = not bg.Visible
+            
+            -- Visual feedback
+            local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)})
+            local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 60, 0, 60)})
+            
+            shrink:Play()
+            shrink.Completed:Connect(function()
+                grow:Play()
+            end)
+        end
+    end)
+    
+    self.MobileButton = Toggle
+    self.MobileButtonGui = ToggleGui
+    
+    self:SetupChatCommands()
+    
+    if Library.Notification then
+        Library.Notification("Mobile button created. Use /e show or /e hide", "info", 3)
+    end
+    
+    return Toggle
+end
+
+function windowHandler:SetupChatCommands()
+    if self._chatCommandsSetup then return end
+    self._chatCommandsSetup = true
+    
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    
+    local function onChatted(message)
+        local lowerMsg = message:lower():gsub("%s+", "")
+        
+        if lowerMsg == "/eshow" or lowerMsg == "/e show" then
+            if self.MobileButton then
+                self.MobileButton.Visible = true
+                if Library.Notification then
+                    Library.Notification("Mobile button shown", "success", 2)
+                end
+            else
+                if Library.Notification then
+                    Library.Notification("Mobile button not created", "warning", 2)
+                end
+            end
+        elseif lowerMsg == "/ehide" or lowerMsg == "/e hide" then
+            if self.MobileButton then
+                self.MobileButton.Visible = false
+                if Library.Notification then
+                    Library.Notification("Mobile button hidden", "success", 2)
+                end
+            end
+        elseif lowerMsg == "/etoggle" or lowerMsg == "/e toggle" then
+            local bg = self.Instance:FindFirstChild("Background")
+            if bg then
+                bg.Visible = not bg.Visible
+                if Library.Notification then
+                    Library.Notification("UI toggled", "info", 2)
+                end
+            end
+        end
+    end
+    
+    LocalPlayer.Chatted:Connect(onChatted)
+end
+
+function windowHandler:ShowMobileButton()
+    if self.MobileButton then
+        self.MobileButton.Visible = true
+        if Library.Notification then
+            Library.Notification("Mobile button shown", "success", 2)
+        end
+    end
+end
+
+function windowHandler:HideMobileButton()
+    if self.MobileButton then
+        self.MobileButton.Visible = false
+        if Library.Notification then
+            Library.Notification("Mobile button hidden", "success", 2)
+        end
+    end
+end
+
+function windowHandler:RemoveMobileButton()
+    if self.MobileButtonGui then
+        self.MobileButtonGui:Destroy()
+        self.MobileButtonGui = nil
+        self.MobileButton = nil
+    end
+end
+
+function windowHandler:AutoMobileButton(imageId)
+    local UserInputService = game:GetService("UserInputService")
+
+    local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+    
+    if isMobile then
+        self:CreateMobileButton(imageId, false)
+    end
+    
+    return isMobile
+end
+
 return Library
