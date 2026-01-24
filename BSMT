@@ -3505,6 +3505,7 @@ function notificationHandler:Dismiss()
 	end)
 end
 
+-- Config System - COMPLETE REPLACEMENT
 _G.CerberusConfigData = _G.CerberusConfigData or {}
 _G.CerberusConfigElements = _G.CerberusConfigElements or {}
 
@@ -3576,22 +3577,10 @@ function Library.LoadConfig(configName)
             _G.CerberusConfigData[identifier] = value
         end
         
-        -- Apply to registered elements
         for identifier, element in pairs(_G.CerberusConfigElements) do
             if result[identifier] ~= nil and element.Type == "Toggle" then
-                -- Update visual state WITHOUT triggering callback
-                element.Enabled = result[identifier]
-                
-                local tweenTime = .275
-                if element.Enabled then
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)}):Play()
-                else
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)}):Play()
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0}):Play()
-                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)}):Play()
-                end
+                -- Use the Apply method which runs callback + updates visuals
+                element:Apply(result[identifier], true)
             end
         end
         
@@ -3687,18 +3676,44 @@ function Library.GetAutoLoad()
     return nil
 end
 
+function toggleHandler:Apply(value, runCallback)
+    self.Enabled = value
+    
+    local tweenTime = .275
+    local toggleImage = self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage
+    local toggleImageCorner = toggleImage.ToggleImageCorner
+    
+    if self.Enabled then
+        TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
+        TweenService:Create(toggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
+        TweenService:Create(toggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)}):Play()
+    else
+        TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)}):Play()
+        TweenService:Create(toggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0}):Play()
+        TweenService:Create(toggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)}):Play()
+    end
+    
+    if runCallback and self.Callback then
+        self.Callback(self.Enabled)
+    end
+    
+    if self.ConfigIdentifier then
+        _G.CerberusConfigData[self.ConfigIdentifier] = self.Enabled
+    end
+end
+
 function elementHandler:Toggle(toggleName, callback, configIdentifier)
     local toggle = setmetatable({}, toggleHandler)
     local toggleInstance = originalElements.Toggle:Clone()
     local textOffset = 4
     
-    -- Set config identifier FIRST
     toggle.ConfigIdentifier = configIdentifier or toggleName
     toggle.Type = "Toggle"
     toggle.IdentifierText = toggleName or "N/A"
     toggle.Instance = toggleInstance
     toggle.GuiToRemove = toggleInstance
     toggle.Enabled = false
+    toggle.Callback = callback or function() end
     
     _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
     
@@ -3710,35 +3725,17 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
         self.ChildedElementsInfo[toggleInstance] = toggle
     end
     
-    callback = callback or function() end
-    
-    local function onToggleClick()
-        toggle.Enabled = not toggle.Enabled
-        
-        _G.CerberusConfigData[toggle.ConfigIdentifier] = toggle.Enabled
-        
-        local tweenTime = .275
-        if toggle.Enabled then
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)}):Play()
-        else
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)}):Play()
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0}):Play()
-            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)}):Play()
-        end
-        
-        -- Call user callback
-        callback(toggle.Enabled)
-    end
-    
-    toggleInstance.MouseButton1Click:Connect(onToggleClick)
+    -- Single click handler that uses Apply method
+    toggleInstance.MouseButton1Click:Connect(function()
+        toggle:Apply(not toggle.Enabled, true)
+    end)
     
     toggleInstance.ToggleText.Text = toggleName or "N/A"
     toggleInstance.Parent = self.ElementToParentChildren
     toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
     toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
     
+    -- Set initial visual state (without animation)
     if toggle.Enabled then
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.Rotation = 360
@@ -3746,6 +3743,14 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     end
     
     return toggle
+end
+
+function toggleHandler:Set(bool, callback)
+    if typeof(bool) ~= "boolean" then error("First argument must be a boolean.") end
+    self:Apply(bool, callback ~= nil)
+    if callback then
+        callback(bool)
+    end
 end
 
 function windowHandler:SetKeybind(keybind)
@@ -3870,5 +3875,4 @@ task.spawn(function()
         Library.LoadConfig(autoLoadConfig)
     end
 end)
-
 return Library
