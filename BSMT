@@ -1939,6 +1939,9 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	local originialWindowSize
 	local minimizedLongBarOriginialSize
 	local minimizedShortBarOriginialSize
+    window.IsHidden = false
+    window.TabInfo = {}
+    window.CurrentKeybind = Enum.KeyCode.RightShift
 
 	local background = windowInstance.Background
 	local heading = background.Heading
@@ -3502,15 +3505,14 @@ function notificationHandler:Dismiss()
 	end)
 end
 
--- Config System
-local configHandler = {}
-configHandler.__index = configHandler
+-- Config System - COMPLETE REPLACEMENT
+_G.CerberusConfigData = _G.CerberusConfigData or {}
+_G.CerberusConfigElements = _G.CerberusConfigElements or {}
 
 local currentGameId = tostring(game.PlaceId)
 local configFolder = "CerberusConfigs"
 local gameConfigFolder = configFolder .. "/" .. currentGameId
 
--- Ensure folders exist
 if isfolder and not isfolder(configFolder) then
     makefolder(configFolder)
 end
@@ -3518,10 +3520,6 @@ end
 if isfolder and not isfolder(gameConfigFolder) then
     makefolder(gameConfigFolder)
 end
-
--- Config data storage
-_G.CerberusConfigData = _G.CerberusConfigData or {}
-_G.CerberusConfigElements = _G.CerberusConfigElements or {}
 
 function Library.SaveConfig(configName)
     if not writefile then
@@ -3534,13 +3532,8 @@ function Library.SaveConfig(configName)
     configName = configName or "default"
     local configPath = gameConfigFolder .. "/" .. configName .. ".cfg"
     
-    local configData = {}
-    for identifier, value in pairs(_G.CerberusConfigData) do
-        configData[identifier] = value
-    end
-    
     local success, err = pcall(function()
-        writefile(configPath, game:GetService("HttpService"):JSONEncode(configData))
+        writefile(configPath, game:GetService("HttpService"):JSONEncode(_G.CerberusConfigData))
     end)
     
     if success then
@@ -3575,21 +3568,30 @@ function Library.LoadConfig(configName)
     end
     
     local success, result = pcall(function()
-        local fileContent = readfile(configPath)
-        return game:GetService("HttpService"):JSONDecode(fileContent)
+        return game:GetService("HttpService"):JSONDecode(readfile(configPath))
     end)
     
     if success and result then
-        -- Update global config data
+        -- Update data
         for identifier, value in pairs(result) do
             _G.CerberusConfigData[identifier] = value
         end
         
-        -- Apply to all registered elements
+        -- Apply to registered elements
         for identifier, element in pairs(_G.CerberusConfigElements) do
-            if result[identifier] ~= nil then
-                if element.Type == "Toggle" then
-                    element:Set(result[identifier], function() end)
+            if result[identifier] ~= nil and element.Type == "Toggle" then
+                -- Update visual state WITHOUT triggering callback
+                element.Enabled = result[identifier]
+                
+                local tweenTime = .275
+                if element.Enabled then
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)}):Play()
+                else
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)}):Play()
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0}):Play()
+                    TweenService:Create(element.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)}):Play()
                 end
             end
         end
@@ -3623,7 +3625,7 @@ function Library.DeleteConfig(configName)
         return false
     end
     
-    local success, err = pcall(function()
+    local success = pcall(function()
         delfile(configPath)
     end)
     
@@ -3641,13 +3643,8 @@ function Library.DeleteConfig(configName)
 end
 
 function Library.GetConfigs()
-    if not listfiles or not isfolder then
-        return {}
-    end
-    
-    if not isfolder(gameConfigFolder) then
-        return {}
-    end
+    if not listfiles or not isfolder then return {} end
+    if not isfolder(gameConfigFolder) then return {} end
     
     local configs = {}
     local success, files = pcall(function()
@@ -3667,13 +3664,11 @@ function Library.GetConfigs()
 end
 
 function Library.AutoLoadConfig(configName)
-    if not writefile or not readfile then return end
-    
+    if not writefile then return end
     local autoLoadPath = gameConfigFolder .. "/_autoload.txt"
     pcall(function()
         writefile(autoLoadPath, configName)
     end)
-    
     if Library.Notification then
         Library.Notification("Auto-load set to '" .. configName .. "'", "success", 3)
     end
@@ -3681,51 +3676,124 @@ end
 
 function Library.GetAutoLoad()
     if not readfile or not isfile then return nil end
-    
     local autoLoadPath = gameConfigFolder .. "/_autoload.txt"
-    
     if isfile(autoLoadPath) then
         local success, result = pcall(function()
             return readfile(autoLoadPath)
         end)
-        
         if success and result then
             return result
         end
     end
-    
     return nil
 end
 
--- Enhanced Toggle with config support
-local originalToggle = elementHandler.Toggle
+-- REPLACE THE EXISTING elementHandler:Toggle FUNCTION WITH THIS
 function elementHandler:Toggle(toggleName, callback, configIdentifier)
-    local toggle = originalToggle(self, toggleName, function(value)
-        -- Save to config when toggle changes
-        if toggle.ConfigIdentifier then
-            _G.CerberusConfigData[toggle.ConfigIdentifier] = value
-        end
-        -- Call user callback
-        if callback then
-            callback(value)
-        end
-    end)
+    local toggle = setmetatable({}, toggleHandler)
+    local toggleInstance = originalElements.Toggle:Clone()
+    local textOffset = 4
     
-    -- Set config identifier
+    -- Set config identifier FIRST
     toggle.ConfigIdentifier = configIdentifier or toggleName
+    toggle.Type = "Toggle"
+    toggle.IdentifierText = toggleName or "N/A"
+    toggle.Instance = toggleInstance
+    toggle.GuiToRemove = toggleInstance
+    toggle.Enabled = false
     
     -- Register element globally
     _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
     
-    -- Load from config if exists
+    -- Load initial state from config if exists
     if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
-        toggle:Set(_G.CerberusConfigData[toggle.ConfigIdentifier], function() end)
+        toggle.Enabled = _G.CerberusConfigData[toggle.ConfigIdentifier]
+    end
+    
+    if self.Type == "SearchBar" then
+        self.ChildedElementsInfo[toggleInstance] = toggle
+    end
+    
+    callback = callback or function() end
+    
+    -- Single click handler
+    local function onToggleClick()
+        toggle.Enabled = not toggle.Enabled
+        
+        -- Save to config
+        _G.CerberusConfigData[toggle.ConfigIdentifier] = toggle.Enabled
+        
+        -- Visual update
+        local tweenTime = .275
+        if toggle.Enabled then
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)}):Play()
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360}):Play()
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)}):Play()
+        else
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)}):Play()
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0}):Play()
+            TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)}):Play()
+        end
+        
+        -- Call user callback
+        callback(toggle.Enabled)
+    end
+    
+    toggleInstance.MouseButton1Click:Connect(onToggleClick)
+    
+    toggleInstance.ToggleText.Text = toggleName or "N/A"
+    toggleInstance.Parent = self.ElementToParentChildren
+    toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
+    toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
+    
+    -- Set initial visual state
+    if toggle.Enabled then
+        toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
+        toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.Rotation = 360
+        toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.Size = UDim2.fromScale(1,1)
     end
     
     return toggle
 end
 
--- Config Tab Builder
+-- REPLACE windowHandler:SetKeybind WITH THIS
+function windowHandler:SetKeybind(keybind)
+    local function getMatchingKeyCodeFromName(name)
+        if not name then return end
+        for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
+            if keycode.Name:lower() == name:lower() then
+                return keycode
+            end
+        end
+    end
+    
+    local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
+    self.CurrentKeybind = keyCode
+    
+    -- Disconnect old connection if exists
+    if self._keybindConnection then
+        self._keybindConnection:Disconnect()
+    end
+    
+    -- Create new connection
+    self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+        if gameProcessedEvent then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            if input.KeyCode == self.CurrentKeybind then
+                local bg = self.Instance:FindFirstChild("Background")
+                if bg then
+                    bg.Visible = not bg.Visible
+                end
+            end
+        end
+    end)
+    
+    if Library.Notification then
+        Library.Notification("UI Toggle set to: " .. keyCode.Name, "info", 3)
+    end
+end
+
+-- Config Tab
 function windowHandler:ConfigTab()
     local configTab = self:Tab("⚙️ Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
@@ -3804,67 +3872,20 @@ function windowHandler:ConfigTab()
         refreshConfigs()
     end)
     
-    configSection:Title("Auto-Load")
-    
-    local currentAutoLoad = Library.GetAutoLoad()
-    configSection:Toggle("Enable Auto-Load", function(enabled)
-        if enabled and currentConfigName and currentConfigName ~= "" then
-            Library.AutoLoadConfig(currentConfigName)
-        end
-    end)
-    
-    if currentAutoLoad then
-        configSection:Label("Current: " .. currentAutoLoad)
-    end
-    
-    configSection:Title("UI Settings")
-    
-    configSection:Label("Click button, then press new key")
-    
-    local keybindElement = configSection:Keybind("UI Toggle Key", function()
-        -- Callback handled by SetKeybind
-    end, self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift")
-    
     return configTab
 end
 
--- UI Toggle Keybind
-function windowHandler:SetKeybind(keybind)
-    local function getMatchingKeyCodeFromName(name)
-        if not name then return end
-        for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
-            if keycode.Name:lower() == name:lower() then
-                return keycode
-            end
-        end
-    end
-    
-    local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
-    self.CurrentKeybind = keyCode
-    
-    UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-        if gameProcessedEvent then return end
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == self.CurrentKeybind then
-                local bg = self.Instance:FindFirstChild("Background")
-                if bg then
-                    bg.Visible = not bg.Visible
-                end
-            end
-        end
-    end)
-    
-    if Library.Notification then
-        Library.Notification("UI Toggle set to: " .. keyCode.Name, "info", 3)
-    end
-end
+-- Initialize CurrentKeybind in Library.new
+-- ADD THIS LINE in the Library.new function after "window.IsHidden = false":
+-- window.CurrentKeybind = Enum.KeyCode.RightShift
 
 -- Auto-load on startup
 task.spawn(function()
+    task.wait(1)
     local autoLoadConfig = Library.GetAutoLoad()
     if autoLoadConfig then
-        task.wait(1)
         Library.LoadConfig(autoLoadConfig)
     end
 end)
+
 return Library
