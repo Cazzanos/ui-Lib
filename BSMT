@@ -3502,8 +3502,6 @@ function notificationHandler:Dismiss()
 	end)
 end
 
--- ADD THIS TO THE CERBERUS LIBRARY AFTER THE NOTIFICATION SYSTEM AND BEFORE 'return Library'
-
 -- Config System
 local configHandler = {}
 configHandler.__index = configHandler
@@ -3513,10 +3511,6 @@ local configFolder = "CerberusConfigs"
 local gameConfigFolder = configFolder .. "/" .. currentGameId
 
 -- Ensure folders exist
-if not isfolder then
-    warn("Executor doesn't support folder operations")
-end
-
 if isfolder and not isfolder(configFolder) then
     makefolder(configFolder)
 end
@@ -3527,6 +3521,7 @@ end
 
 -- Config data storage
 _G.CerberusConfigData = _G.CerberusConfigData or {}
+_G.CerberusConfigElements = _G.CerberusConfigElements or {}
 
 function Library.SaveConfig(configName)
     if not writefile then
@@ -3585,8 +3580,18 @@ function Library.LoadConfig(configName)
     end)
     
     if success and result then
+        -- Update global config data
         for identifier, value in pairs(result) do
             _G.CerberusConfigData[identifier] = value
+        end
+        
+        -- Apply to all registered elements
+        for identifier, element in pairs(_G.CerberusConfigElements) do
+            if result[identifier] ~= nil then
+                if element.Type == "Toggle" then
+                    element:Set(result[identifier], function() end)
+                end
+            end
         end
         
         if Library.Notification then
@@ -3692,77 +3697,32 @@ function Library.GetAutoLoad()
     return nil
 end
 
--- Enhanced toggle handler with config support
-function toggleHandler:Set(bool, callback)
-    local tweenTime = .275
-    local cornerOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)})
-    local cornerOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)})
-    local imageRotationOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360})
-    local imageRotationOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0})
-    local imageSizeOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)})
-    local imageSizeOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)})
-    
-    if typeof(bool) ~= "boolean" then error("First argument must be a boolean.") end
-    
-    callback = callback or function() end
-    self.Enabled = bool
-    
-    -- Save to config data
-    if self.ConfigIdentifier then
-        _G.CerberusConfigData[self.ConfigIdentifier] = bool
-    end
-
-    if self.Enabled then
-        cornerOnTween:Play()
-        imageRotationOnTween:Play()
-        imageSizeOnTween:Play()
-    else
-        cornerOffTween:Play()
-        imageRotationOffTween:Play()
-        imageSizeOffTween:Play()
-    end
-
-    callback(bool)
-end
-
--- Enhanced elementHandler:Toggle with config support
+-- Enhanced Toggle with config support
 local originalToggle = elementHandler.Toggle
 function elementHandler:Toggle(toggleName, callback, configIdentifier)
-    local toggle = originalToggle(self, toggleName, callback)
+    local toggle = originalToggle(self, toggleName, function(value)
+        -- Save to config when toggle changes
+        if toggle.ConfigIdentifier then
+            _G.CerberusConfigData[toggle.ConfigIdentifier] = value
+        end
+        -- Call user callback
+        if callback then
+            callback(value)
+        end
+    end)
     
-    -- Add config identifier
+    -- Set config identifier
     toggle.ConfigIdentifier = configIdentifier or toggleName
+    
+    -- Register element globally
+    _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
     
     -- Load from config if exists
     if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
-        toggle:Set(_G.CerberusConfigData[toggle.ConfigIdentifier])
+        toggle:Set(_G.CerberusConfigData[toggle.ConfigIdentifier], function() end)
     end
-    
-    -- Override the callback to save config
-    local originalCallback = callback or function() end
-    local newCallback = function(value)
-        _G.CerberusConfigData[toggle.ConfigIdentifier] = value
-        originalCallback(value)
-    end
-    
-    toggle.Instance.MouseButton1Click:Connect(function()
-        newCallback(toggle.Enabled)
-    end)
     
     return toggle
-end
-
--- Enhanced keybind handler with proper key capture
-local originalKeybindCreate = elementHandler.Keybind
-
-function elementHandler:Keybind(keybindName, callback, defaultKey)
-    local keybind = originalKeybindCreate(self, keybindName, callback, defaultKey)
-    
-    -- Store the keybind so we can access it later
-    keybind.CurrentKey = defaultKey
-    keybind.OnKeyChanged = nil -- Callback for when key changes
-    
-    return keybind
 end
 
 -- Config Tab Builder
@@ -3770,10 +3730,9 @@ function windowHandler:ConfigTab()
     local configTab = self:Tab("⚙️ Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
     
-    -- Config name input (stored properly)
     local currentConfigName = "MyConfig"
     
-    local configNameBox = configSection:TextBox("Config Name", function(text)
+    configSection:TextBox("Config Name", function(text)
         if text and text ~= "" then
             currentConfigName = text
             Library.Notification("Config name set to: " .. text, "info", 2)
@@ -3782,12 +3741,10 @@ function windowHandler:ConfigTab()
     
     configSection:Title("Actions")
     
-    -- Save button
     configSection:Button("💾 Save Config", function()
         if currentConfigName and currentConfigName ~= "" then
             local success = Library.SaveConfig(currentConfigName)
             if success then
-                -- Refresh the list after saving
                 task.wait(0.5)
                 refreshConfigs()
             end
@@ -3796,7 +3753,6 @@ function windowHandler:ConfigTab()
         end
     end)
     
-    -- Load button
     configSection:Button("📂 Load Config", function()
         if currentConfigName and currentConfigName ~= "" then
             Library.LoadConfig(currentConfigName)
@@ -3805,7 +3761,6 @@ function windowHandler:ConfigTab()
         end
     end)
     
-    -- Delete button
     configSection:Button("🗑️ Delete Config", function()
         if currentConfigName and currentConfigName ~= "" then
             local success = Library.DeleteConfig(currentConfigName)
@@ -3820,19 +3775,15 @@ function windowHandler:ConfigTab()
     
     configSection:Title("Saved Configs")
     
-    -- List of configs
     local configList = configSection:Dropdown("Available Configs")
     
-    -- Refresh configs function (define it here so it can be called)
     function refreshConfigs()
-        -- Clear existing
         for _, child in ipairs(configList.ElementToParentChildren:GetChildren()) do
             if child:IsA("GuiObject") then
                 child:Destroy()
             end
         end
         
-        -- Add configs
         local configs = Library.GetConfigs()
         for _, config in ipairs(configs) do
             configList:Button(config, function()
@@ -3849,14 +3800,12 @@ function windowHandler:ConfigTab()
     
     refreshConfigs()
     
-    -- Refresh button
     configSection:Button("🔄 Refresh List", function()
         refreshConfigs()
     end)
     
     configSection:Title("Auto-Load")
     
-    -- Auto-load toggle
     local currentAutoLoad = Library.GetAutoLoad()
     configSection:Toggle("Enable Auto-Load", function(enabled)
         if enabled and currentConfigName and currentConfigName ~= "" then
@@ -3868,46 +3817,22 @@ function windowHandler:ConfigTab()
         configSection:Label("Current: " .. currentAutoLoad)
     end
     
-    -- UI Keybind Section
     configSection:Title("UI Settings")
     
-    configSection:Label("Click keybind, then press new key")
+    configSection:Label("Click button, then press new key")
     
     local keybindElement = configSection:Keybind("UI Toggle Key", function()
-        -- Empty callback - the actual toggle is handled by SetKeybind
-    end, self.CurrentKeybind and self.CurrentKeybind.Name or "RightControl")
-    
-    -- Monitor for keybind changes
-    local keybindInstance = keybindElement.Instance
-    local keyTextLabel = keybindInstance.BoxBackground.InnerBox.KeyText
-    
-    local lastKeyText = keyTextLabel.Text
-    task.spawn(function()
-        while keybindInstance.Parent do
-            task.wait(0.1)
-            if keyTextLabel.Text ~= lastKeyText and keyTextLabel.Text ~= "Press a key..." then
-                lastKeyText = keyTextLabel.Text
-                
-                -- Update the window's keybind
-                for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
-                    if keycode.Name == lastKeyText then
-                        self.CurrentKeybind = keycode
-                        Library.Notification("UI key changed to: " .. lastKeyText, "success", 2)
-                        break
-                    end
-                end
-            end
-        end
-    end)
+        -- Callback handled by SetKeybind
+    end, self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift")
     
     return configTab
 end
 
--- UI Toggle Keybind Enhancement
+-- UI Toggle Keybind
 function windowHandler:SetKeybind(keybind)
     local function getMatchingKeyCodeFromName(name)
         if not name then return end
-        for i, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
+        for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
             if keycode.Name:lower() == name:lower() then
                 return keycode
             end
@@ -3934,11 +3859,11 @@ function windowHandler:SetKeybind(keybind)
     end
 end
 
--- Auto-load config on startup
+-- Auto-load on startup
 task.spawn(function()
     local autoLoadConfig = Library.GetAutoLoad()
     if autoLoadConfig then
-        task.wait(1) -- Wait for UI to initialize
+        task.wait(1)
         Library.LoadConfig(autoLoadConfig)
     end
 end)
