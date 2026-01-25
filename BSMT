@@ -3906,7 +3906,6 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
     Toggle.Size = UDim2.new(0, 60, 0, 60)
     Toggle.Image = imageId or "rbxassetid://11435586663"
     Toggle.ImageColor3 = Color3.fromRGB(255, 255, 255)
-    Toggle.Draggable = true
     Toggle.Active = true
     Toggle.AutoButtonColor = true
     Toggle.Visible = true
@@ -3914,26 +3913,50 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
     UICorner.CornerRadius = UDim.new(0.25, 0)
     UICorner.Parent = Toggle
     
-    local function updatePosition()
-        local viewportSize = workspace.CurrentCamera.ViewportSize
-        local pos = Toggle.AbsolutePosition
-        local size = Toggle.AbsoluteSize
-        
-        local newX = math.clamp(pos.X, 0, viewportSize.X - size.X)
-        local newY = math.clamp(pos.Y, 0, viewportSize.Y - size.Y)
-        
-        Toggle.Position = UDim2.new(0, newX, 0, newY)
-    end
+    local dragging = false
+    local dragInput, dragStart, startPos
     
-    Toggle:GetPropertyChangedSignal("AbsolutePosition"):Connect(updatePosition)
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updatePosition)
+    Toggle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Toggle.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    Toggle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            local viewportSize = workspace.CurrentCamera.ViewportSize
+            
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+            
+            -- Clamp to screen bounds
+            newX = math.clamp(newX, 0, viewportSize.X - Toggle.AbsoluteSize.X)
+            newY = math.clamp(newY, 0, viewportSize.Y - Toggle.AbsoluteSize.Y)
+            
+            Toggle.Position = UDim2.new(0, newX, 0, newY)
+        end
+    end)
     
     Toggle.MouseButton1Click:Connect(function()
         local bg = self.Instance:FindFirstChild("Background")
         if bg then
             bg.Visible = not bg.Visible
             
-            -- Visual feedback
             local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
             local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)})
             local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 60, 0, 60)})
