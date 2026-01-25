@@ -3572,7 +3572,6 @@ function Library.LoadConfig(configName)
     end)
     
     if success and result then
-        -- Update data
         for identifier, value in pairs(result) do
             _G.CerberusConfigData[identifier] = value
         end
@@ -3725,7 +3724,6 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
         self.ChildedElementsInfo[toggleInstance] = toggle
     end
     
-    -- Single click handler that uses Apply method
     toggleInstance.MouseButton1Click:Connect(function()
         toggle:Apply(not toggle.Enabled, true)
     end)
@@ -3735,7 +3733,6 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
     toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
     
-    -- Set initial visual state (without animation)
     if toggle.Enabled then
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.Rotation = 360
@@ -3787,6 +3784,7 @@ function windowHandler:SetKeybind(keybind)
     end
 end
 
+-- Config Tab
 function windowHandler:ConfigTab()
     local configTab = self:Tab("Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
@@ -3863,6 +3861,57 @@ function windowHandler:ConfigTab()
     
     configSection:Button("Refresh List", function()
         refreshConfigs()
+    end)
+    
+    configSection:Title("Auto-Load")
+    
+    local currentAutoLoad = Library.GetAutoLoad()
+    local autoLoadToggle = configSection:Toggle("Enable Auto-Load", function(enabled)
+        if enabled and currentConfigName and currentConfigName ~= "" then
+            Library.AutoLoadConfig(currentConfigName)
+        elseif not enabled then
+            -- Clear auto-load
+            if writefile then
+                local autoLoadPath = gameConfigFolder .. "/_autoload.txt"
+                pcall(function()
+                    delfile(autoLoadPath)
+                end)
+            end
+            Library.Notification("Auto-load disabled", "info", 2)
+        end
+    end, "autoload_enabled")
+    
+    if currentAutoLoad then
+        configSection:Label("Current: " .. currentAutoLoad)
+        autoLoadToggle:Set(true)
+    end
+    
+    configSection:Title("UI Settings")
+    
+    configSection:Label("Click keybind, then press new key")
+    
+    local keybindElement = configSection:Keybind("UI Toggle Key", function()
+        -- Callback handled by keybind system
+    end, self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift")
+    
+    local keybindInstance = keybindElement.Instance
+    local keyTextLabel = keybindInstance.BoxBackground.InnerBox.KeyText
+    
+    local lastKeyText = keyTextLabel.Text
+    task.spawn(function()
+        while keybindInstance.Parent do
+            task.wait(0.1)
+            if keyTextLabel.Text ~= lastKeyText and keyTextLabel.Text ~= "Press a key..." then
+                lastKeyText = keyTextLabel.Text
+                
+                for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
+                    if keycode.Name == lastKeyText then
+                        self:SetKeybind(lastKeyText)
+                        break
+                    end
+                end
+            end
+        end
     end)
     
     return configTab
