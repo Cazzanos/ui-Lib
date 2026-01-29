@@ -3903,7 +3903,7 @@ function windowHandler:ConfigTab()
         local configs = Library.GetConfigs()
         for _, config in ipairs(configs) do
             local isActive = (currentAutoLoad == config)
-            local buttonText = isActive and (.. config) or config
+            local buttonText = isActive and ("S" .. config) or config
             
             autoLoadDropdown:Button(buttonText, function()
                 selectedAutoLoadConfig = config
