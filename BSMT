@@ -3571,14 +3571,12 @@ function Library.LoadConfig(configName)
     end)
     
     if success and result then
-        -- Update data
         for identifier, value in pairs(result) do
             _G.CerberusConfigData[identifier] = value
         end
         
         for identifier, element in pairs(_G.CerberusConfigElements) do
             if result[identifier] ~= nil and element.Type == "Toggle" then
-                -- Use the Apply method which runs callback + updates visuals
                 element:Apply(result[identifier], true)
             end
         end
@@ -3675,7 +3673,7 @@ end
 
 function toggleHandler:Apply(value, runCallback)
     self.Enabled = value
-
+    
     local tweenTime = .275
     local toggleImage = self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage
     local toggleImageCorner = toggleImage.ToggleImageCorner
@@ -3694,7 +3692,6 @@ function toggleHandler:Apply(value, runCallback)
         self.Callback(self.Enabled)
     end
     
-    -- Save to config
     if self.ConfigIdentifier then
         _G.CerberusConfigData[self.ConfigIdentifier] = self.Enabled
     end
@@ -3715,7 +3712,6 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     
     _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
     
-    -- Load initial state from config if exists
     if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
         toggle.Enabled = _G.CerberusConfigData[toggle.ConfigIdentifier]
     end
@@ -3763,7 +3759,6 @@ function windowHandler:SetKeybind(keybind)
     local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
     self.CurrentKeybind = keyCode
     
-    -- Disconnect old connection if exists
     if self._keybindConnection then
         self._keybindConnection:Disconnect()
     end
@@ -3785,7 +3780,7 @@ function windowHandler:SetKeybind(keybind)
     end
 end
 
--- Config Tab with FIXED Autoload Dropdown & Keybind
+-- Config Tab
 function windowHandler:ConfigTab()
     local configTab = self:Tab("Config", "rbxassetid://11295279671")
     local configSection = configTab:Section("Configuration Manager")
@@ -3877,7 +3872,7 @@ function windowHandler:ConfigTab()
                 Library.SetAutoLoad(selectedAutoLoadConfig)
                 Library.Notification("Auto-load enabled: " .. selectedAutoLoadConfig, "success", 3)
             else
-                Library.Notification("Select a config first!", "warning", 3)
+                Library.Notification("Select a config first", "warning", 3)
                 autoLoadToggle:Set(false)
             end
         else
@@ -3891,7 +3886,6 @@ function windowHandler:ConfigTab()
     local autoLoadDropdown = configSection:Dropdown("Select Config to Auto-Load")
     
     function refreshAutoLoadDropdown()
-        -- Clear dropdown
         for _, child in ipairs(autoLoadDropdown.ElementToParentChildren:GetChildren()) do
             if child:IsA("GuiObject") then
                 child:Destroy()
@@ -3903,18 +3897,17 @@ function windowHandler:ConfigTab()
         local configs = Library.GetConfigs()
         for _, config in ipairs(configs) do
             local isActive = (currentAutoLoad == config)
-            local buttonText = isActive and ("S" .. config) or config
+            local buttonText = isActive and (config .. " [Active]") or config
             
             autoLoadDropdown:Button(buttonText, function()
                 selectedAutoLoadConfig = config
                 autoLoadDropdown:ChangeText(config)
                 
-                -- If toggle is enabled, apply immediately
                 if autoLoadToggle.Enabled then
                     Library.SetAutoLoad(config)
                     Library.Notification("Auto-load config changed to: " .. config, "success", 3)
                 else
-                    Library.Notification("Config selected: " .. config .. " (toggle to enable)", "info", 3)
+                    Library.Notification("Config selected: " .. config, "info", 3)
                 end
                 
                 refreshAutoLoadDropdown()
@@ -3934,11 +3927,7 @@ function windowHandler:ConfigTab()
     
     refreshAutoLoadDropdown()
     
-    configSection:Label("Select config, then toggle to enable")
-    
     configSection:Title("UI Settings")
-    
-    configSection:Label("Press button, then press new key")
     
     local currentKeybindText = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
     local keybindButton = configSection:Button("UI Keybind: " .. currentKeybindText, function()
@@ -3949,10 +3938,8 @@ function windowHandler:ConfigTab()
             if input.UserInputType == Enum.UserInputType.Keyboard then
                 local keyName = input.KeyCode.Name
                 
-                -- Update window keybind
                 self:SetKeybind(keyName)
                 
-                -- Update button text
                 keybindButton.Instance.ButtonText.Text = "UI Keybind: " .. keyName
                 
                 Library.Notification("Keybind changed to: " .. keyName, "success", 2)
