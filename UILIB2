@@ -4340,6 +4340,12 @@ function windowHandler:AutoMobileButton(imageId)
     
     return isMobile
 end
+
+_G.Notify = function(message, notifType, duration)
+	return Library.Notification(message, notifType, duration)
+end
+
+-- Expose settings globally for scripters
 _G.BSMTSettings = Library.Settings
 
 return Library
