@@ -154,17 +154,18 @@ local Theme = {
 	TextDim         = Color3.fromRGB(139, 141, 147),
 }
 
--- Metrics: scaled sizes so everything is readable on all screens
+-- Metrics: fixed on desktop, scaled up on mobile for readability
+local mobileScale = isMobile and math.clamp(viewPortSize.Y / 1080, 1.0, 1.6) or 1.0
 local M = {
-	ElementH    = math.round(18 * scaleFactor),
-	ToggleH     = math.round(14 * scaleFactor),
-	SliderH     = math.round(32 * scaleFactor),
-	TabH        = math.round(27.5 * scaleFactor),
-	SectionHead = math.round(22 * scaleFactor),
-	TextSize    = math.clamp(math.round(14 * scaleFactor), 14, 20),
-	TextSizeSm  = math.clamp(math.round(13 * scaleFactor), 12, 18),
-	Pad         = math.round(4 * scaleFactor),
-	PadLg       = math.round(5 * scaleFactor),
+	ElementH    = math.round(18 * mobileScale),
+	ToggleH     = math.round(14 * mobileScale),
+	SliderH     = math.round(32 * mobileScale),
+	TabH        = math.round(27.5 * mobileScale),
+	SectionHead = math.round(22 * mobileScale),
+	TextSize    = isMobile and math.clamp(math.round(14 * mobileScale), 14, 20) or 14,
+	TextSizeSm  = isMobile and math.clamp(math.round(13 * mobileScale), 12, 18) or 13,
+	Pad         = math.round(4 * mobileScale),
+	PadLg       = math.round(5 * mobileScale),
 	Border      = 1,
 }
 
@@ -648,7 +649,7 @@ local function createOriginialElements()
 		elementHolder.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		elementHolder.BackgroundTransparency = 1.000
 		elementHolder.BorderSizePixel = 0
-		elementHolder.Position = UDim2.new(0, 0, 0, 22)
+		elementHolder.Position = UDim2.new(0, 0, 0, M.SectionHead)
 		elementHolder.Size = UDim2.new(1, 0, 0, 178)
 		elementHolder.ClipsDescendants = true
 
@@ -3738,6 +3739,44 @@ function toggleHandler:Set(bool, callback)
     end
 end
 
+-- BindKey(keyName): binds a keyboard shortcut that BOTH toggles the visual state AND fires the callback.
+-- Usage: local myToggle = section:Toggle("Fly", function(state) ... end)
+--        myToggle:BindKey("X")   -- pressing X will flip the toggle and call the callback
+-- Call myToggle:BindKey(nil) to remove the binding.
+function toggleHandler:BindKey(keyName)
+    -- Remove any existing key binding
+    if self._keyConnection then
+        self._keyConnection:Disconnect()
+        self._keyConnection = nil
+        self._boundKeyCode = nil
+    end
+    
+    if not keyName then return end  -- nil = just remove binding
+    
+    local function getKeyCode(name)
+        for _, kc in pairs(Enum.KeyCode:GetEnumItems()) do
+            if kc.Name:lower() == name:lower() then return kc end
+        end
+    end
+    
+    local keyCode = getKeyCode(keyName)
+    if not keyCode then
+        warn("BSMT ToggleKeybind: Unknown key '" .. tostring(keyName) .. "'")
+        return
+    end
+    
+    self._boundKeyCode = keyCode
+    self._keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            if input.KeyCode == self._boundKeyCode then
+                -- Toggle state, update visuals, and fire callback
+                self:Apply(not self.Enabled, true)
+            end
+        end
+    end)
+end
+
 function windowHandler:SetKeybind(keybind)
     local function getMatchingKeyCodeFromName(name)
         if not name then return end
@@ -3753,23 +3792,24 @@ function windowHandler:SetKeybind(keybind)
     
     if self._keybindConnection then
         self._keybindConnection:Disconnect()
+        self._keybindConnection = nil
     end
     
-    self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-        if gameProcessedEvent then return end
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == self.CurrentKeybind then
-                local bg = self.Instance:FindFirstChild("Background")
-                if bg then
-                    bg.Visible = not bg.Visible
+    -- Register on next frame so the key that triggered this call doesn't fire immediately
+    task.spawn(function()
+        task.wait()
+        self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+            if gameProcessedEvent then return end
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode == self.CurrentKeybind then
+                    local bg = self.Instance:FindFirstChild("Background")
+                    if bg then
+                        bg.Visible = not bg.Visible
+                    end
                 end
             end
-        end
+        end)
     end)
-    
-    if Library.Notification then
-        Library.Notification("UI Toggle set to: " .. keyCode.Name, "info", 2)
-    end
 end
 
 -- Config Tab
@@ -3926,18 +3966,22 @@ function windowHandler:ConfigTab()
         Library.Notification("Press any key...", "info", 2)
         
         local connection
+        local captured = false
         connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                local keyName = input.KeyCode.Name
-                
-                self:SetKeybind(keyName)
-                
-                keybindButton.Instance.ButtonText.Text = "UI Keybind: " .. keyName
-                
-                Library.Notification("Keybind changed to: " .. keyName, "success", 2)
-                
-                connection:Disconnect()
-            end
+            if captured then return end
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if input.KeyCode.Name == "Unknown" then return end
+            
+            captured = true
+            connection:Disconnect()  -- disconnect FIRST before anything else
+            connection = nil
+            
+            local keyName = input.KeyCode.Name
+            task.wait()  -- yield one frame so this InputBegan fully ends before SetKeybind registers its listener
+            
+            self:SetKeybind(keyName)
+            keybindButton.Instance.ButtonText.Text = "UI Keybind: " .. keyName
+            Library.Notification("Keybind changed to: " .. keyName, "success", 2)
         end)
     end)
     
