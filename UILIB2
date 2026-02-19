@@ -2013,7 +2013,6 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	local minimizedShortBarOriginialSize
     window.IsHidden = false
     window.TabInfo = {}
-    window.CurrentKeybind = Enum.KeyCode.RightShift
 
 	local background = windowInstance.Background
 	local heading = background.Heading
@@ -2126,7 +2125,8 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 		constrainToScreen = true
 	end
 
-	visibilityKeybind = getMatchingKeyCodeFromName(visibilityKeybind) or Enum.KeyCode.RightControl
+	-- Parse & store the starting keybind on the window object itself
+	window.CurrentKeybind = getMatchingKeyCodeFromName(visibilityKeybind) or Enum.KeyCode.RightShift
 
 	window.Type = "Window"
 	window.Instance = windowInstance
@@ -2141,10 +2141,11 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	buttonHolder.Plus.MouseButton1Click:Connect(maximizeWindow)
 	buttonHolder.Minus.MouseButton1Click:Connect(minimizeWindow)
 
+	-- Visibility toggle — always reads window.CurrentKeybind so SetKeybind changes take effect
 	UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 		if gameProcessedEvent then return end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
-			if input.KeyCode == visibilityKeybind then
+			if input.KeyCode == window.CurrentKeybind then
 				background.Visible = not background.Visible
 			end
 		end
@@ -2169,6 +2170,9 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	end
 
 	holder.PageLogo.Image = backgroundImageId or "rbxassetid://11435586663"
+	-- Store for use when creating tab pages
+	window._backgroundImageId = backgroundImageId or ""
+	window._backgroundImageRef = holder.PageLogo  -- reuse same image label
 	background.Position = UDim2.new(0, background.AbsolutePosition.X + background.AbsoluteSize.X / 2, 0, background.AbsolutePosition.Y + background.AbsoluteSize.Y / 2 + 36)
 	background.BackgroundUIAspectRatioConstraint:Destroy()
 	holder.Size = UDim2.new(0,holder.AbsoluteSize.X,0,holder.AbsoluteSize.Y)
@@ -2316,7 +2320,26 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 	tabInstance.TabText.Position = UDim2.new(0.035, 8 + tabInstance.TabImage.AbsoluteSize.X, 0, 0)
 	tabInstance.TabText.Size = UDim2.new(0.965, -(8 + tabInstance.TabImage.AbsoluteSize.X + 8), 1, 0)
 	pageInstance.Parent = self.Instance.Background.Holder
-	
+
+	-- Background watermark image inside the page itself
+	do
+		local imgId = self._backgroundImageId or ""
+		if imgId ~= "" then
+			local pageBg = Instance.new("ImageLabel")
+			pageBg.Name = "PageBackground"
+			pageBg.AnchorPoint = Vector2.new(0.5, 0.5)
+			pageBg.Position = UDim2.new(0.5, 0, 0.5, 0)
+			pageBg.Size = UDim2.new(1, 0, 1, 0)
+			pageBg.BackgroundTransparency = 1
+			pageBg.BorderSizePixel = 0
+			pageBg.Image = imgId
+			pageBg.ImageTransparency = 0.82
+			pageBg.ScaleType = Enum.ScaleType.Fit
+			pageBg.ZIndex = 0
+			pageBg.Parent = pageInstance
+		end
+	end
+
 	if isTabFirstTab() then
 		tabInstance.TabSeperator.Size = UDim2.fromScale(.035,1)
 		tabInstance.BackgroundTransparency = .25
@@ -2686,6 +2709,8 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 			end
 			
 			sliderInstance.TextGrouping.NumberText.Text = math.round(sliderValue)
+			slider._currentValue = sliderValue
+			_G.BSMTConfigData[slider.ConfigIdentifier] = sliderValue
 			callback(sliderValue)
 		end
 		
@@ -2727,20 +2752,53 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 	slider.IdentifierText = sliderName or "N/A"
 	slider.Instance = sliderInstance
 	slider.GuiToRemove = sliderInstance
+	slider._minValue = minimumValue
+	slider._maxValue = maximumValue
+	slider._currentValue = minimumValue
 	
 	if self.Type == "SearchBar" then
 		self.ChildedElementsInfo[sliderInstance] = slider
 	end
-	
+
+	-- Config registration: 4th arg can be a config key
+	local sliderConfigKey = sliderName or "N/A"
+	slider.ConfigIdentifier = sliderConfigKey
+	_G.BSMTConfigElements[sliderConfigKey] = slider
+
+	if _G.BSMTConfigData[sliderConfigKey] ~= nil then
+		slider._currentValue = _G.BSMTConfigData[sliderConfigKey]
+	end
+
+	-- Internal helper used by LoadConfig
+	function slider:SetValue(v)
+		v = math.clamp(tonumber(v) or self._minValue, self._minValue, self._maxValue)
+		self._currentValue = v
+		local pct = (v - self._minValue) / (self._maxValue - self._minValue)
+		sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
+		sliderInstance.TextGrouping.NumberText.Text = math.round(v)
+		_G.BSMTConfigData[self.ConfigIdentifier] = v
+		callback(v)
+	end
+
 	sliderInstance.SliderBackground.MouseButton1Down:Connect(onMouseDown)
 	sliderInstance.TextGrouping.NumberText.FocusLost:Connect(onFocusLost)
 	
 	sliderInstance.TextGrouping.SliderText.Text = sliderName or "N/A"
-	sliderInstance.TextGrouping.NumberText.Text = minimumValue
+	sliderInstance.TextGrouping.NumberText.Text = math.round(slider._currentValue)
 	sliderInstance.TextGrouping.NumberText.Size = UDim2.new(0,math.max(requiredErrorTextSpace.X, requiredNumberTextSpace.X) + textPixelOffset,1,0)
+
+	-- Restore bar position from saved config value
+	task.defer(function()
+		if slider._currentValue ~= minimumValue then
+			local pct = (slider._currentValue - minimumValue) / maxMinRange
+			sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
+		end
+	end)
 	
 	sliderInstance.Parent = self.ElementToParentChildren
 	sliderInstance.TextGrouping.SliderText.Size = UDim2.new(0, sliderInstance.TextGrouping.AbsoluteSize.X - textPixelOffset - requiredNumberTextSpace.X, 1, 0)
+
+	return slider
 end
 
 function elementHandler:SearchBar(placeholderText: string): table
@@ -3569,8 +3627,18 @@ function Library.LoadConfig(configName)
         end
         
         for identifier, element in pairs(_G.BSMTConfigElements) do
-            if result[identifier] ~= nil and element.Type == "Toggle" then
-                element:Apply(result[identifier], true)
+            if result[identifier] ~= nil then
+                if element.Type == "Toggle" then
+                    element:Apply(result[identifier], true)
+                elseif element.Type == "Slider" then
+                    element:SetValue(result[identifier])
+                elseif element.Type == "ToggleKeybind" then
+                    -- Re-bind from saved key name
+                    element.toggle:BindKeyCode(result[identifier])
+                    if element.instance then
+                        element.instance.Text = result[identifier]
+                    end
+                end
             end
         end
         
@@ -3739,42 +3807,150 @@ function toggleHandler:Set(bool, callback)
     end
 end
 
--- BindKey(keyName): binds a keyboard shortcut that BOTH toggles the visual state AND fires the callback.
--- Usage: local myToggle = section:Toggle("Fly", function(state) ... end)
---        myToggle:BindKey("X")   -- pressing X will flip the toggle and call the callback
--- Call myToggle:BindKey(nil) to remove the binding.
-function toggleHandler:BindKey(keyName)
-    -- Remove any existing key binding
+-- ─── ToggleHandler: low-level key code binder (internal) ───────────────────────
+-- Binds a KeyCode directly. Used by both the old API and the new BindKey UI.
+function toggleHandler:BindKeyCode(keyCode)
     if self._keyConnection then
         self._keyConnection:Disconnect()
         self._keyConnection = nil
-        self._boundKeyCode = nil
     end
-    
-    if not keyName then return end  -- nil = just remove binding
-    
-    local function getKeyCode(name)
-        for _, kc in pairs(Enum.KeyCode:GetEnumItems()) do
-            if kc.Name:lower() == name:lower() then return kc end
-        end
-    end
-    
-    local keyCode = getKeyCode(keyName)
-    if not keyCode then
-        warn("BSMT ToggleKeybind: Unknown key '" .. tostring(keyName) .. "'")
-        return
-    end
-    
-    self._boundKeyCode = keyCode
+    self._boundKeyCode = keyCode or nil
+    if not keyCode then return end
+
     self._keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.UserInputType == Enum.UserInputType.Keyboard then
             if input.KeyCode == self._boundKeyCode then
-                -- Toggle state, update visuals, and fire callback
                 self:Apply(not self.Enabled, true)
             end
         end
     end)
+end
+
+-- ─── ToggleHandler:BindKey(arg) ──────────────────────────────────────────────
+--
+-- TWO modes depending on what arg is:
+--
+--  1. STRING that is a key name (e.g. "X", "LeftShift")
+--     → Old behaviour: immediately bind that key, no UI created.
+--       myToggle:BindKey("X")
+--
+--  2. STRING that is a label (e.g. "Rocket Spam Keybind")
+--     → New behaviour: add a clickable keybind row BELOW the toggle in the UI.
+--       User clicks it, presses a key, key is bound + saved to config.
+--       myToggle:BindKey("Rocket Spam Keybind")
+--
+-- Pass nil to remove the binding.
+function toggleHandler:BindKey(arg)
+    -- Remove old binding first
+    self:BindKeyCode(nil)
+    if arg == nil then return end
+
+    local function getKeyCode(name)
+        for _, kc in pairs(Enum.KeyCode:GetEnumItems()) do
+            if kc.Name:lower() == name:lower() then return kc end
+        end
+        return nil
+    end
+
+    -- Detect mode: if arg resolves to a known KeyCode, bind directly (old API)
+    local directCode = getKeyCode(arg)
+    if directCode then
+        self:BindKeyCode(directCode)
+        return
+    end
+
+    -- ── New mode: arg is a UI label ──────────────────────────────────────────
+    -- We need to insert a keybind row after the toggle's instance.
+    -- The toggle knows its parent container via self.Instance.Parent
+    local label       = arg
+    local configKey   = (self.ConfigIdentifier or self.IdentifierText or "toggle") .. "_keybind"
+    local parent      = self.Instance and self.Instance.Parent
+
+    if not parent then
+        warn("BSMT BindKey: toggle has no parent yet. Call BindKey after adding to section.")
+        return
+    end
+
+    -- Build the keybind row using the same styling as the existing Keybind element template
+    local keybindRow     = originalElements.Keybind:Clone()
+    local keyText        = keybindRow.BoxBackground.InnerBox.KeyText
+    local boxBackground  = keybindRow.BoxBackground
+    local keybindTextLbl = keybindRow.KeybindText
+    local keybindTextPad = 4
+    local pressMsg       = "None"
+
+    keybindTextLbl.Text  = label
+    keyText.Text         = pressMsg
+
+    -- Size the box properly (same logic as elementHandler:Keybind)
+    boxBackground.BoxAspect:Destroy()
+    keybindRow.Parent = parent
+
+    task.defer(function()
+        local origSize = boxBackground.AbsoluteSize
+        boxBackground.Size = UDim2.fromOffset(origSize.X, origSize.Y)
+        keybindTextLbl.Size = UDim2.new(1, -(origSize.X + keybindTextPad), 1, 0)
+    end)
+
+    -- Restore from config if saved
+    local savedKeyName = _G.BSMTConfigData[configKey]
+    if savedKeyName and savedKeyName ~= "" then
+        local savedCode = getKeyCode(savedKeyName)
+        if savedCode then
+            keyText.Text = savedKeyName
+            self:BindKeyCode(savedCode)
+        end
+    end
+
+    -- Register in config elements so LoadConfig can restore
+    _G.BSMTConfigElements[configKey] = {
+        Type     = "ToggleKeybind",
+        toggle   = self,
+        instance = keyText,
+    }
+
+    -- Click handler: listen for next key
+    local isListening = false
+    local listenConn  = nil
+
+    keybindRow.MouseButton1Click:Connect(function()
+        if isListening then return end
+        isListening    = true
+        keyText.Text   = "Press key..."
+
+        if listenConn then listenConn:Disconnect() end
+        listenConn = UserInputService.InputBegan:Connect(function(input, _gpe)
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if input.KeyCode.Name == "Unknown" then return end
+
+            isListening = false
+            listenConn:Disconnect()
+            listenConn = nil
+
+            local keyName = input.KeyCode.Name
+            keyText.Text  = keyName
+
+            -- Bind the key
+            self:BindKeyCode(input.KeyCode)
+
+            -- Save to config
+            _G.BSMTConfigData[configKey] = keyName
+
+            Library.Notification("Bound '" .. label .. "' → " .. keyName, "success", 2)
+        end)
+    end)
+
+    -- Right-click clears the binding
+    keybindRow.MouseButton2Click:Connect(function()
+        if listenConn then listenConn:Disconnect() listenConn = nil end
+        isListening = false
+        keyText.Text = "None"
+        self:BindKeyCode(nil)
+        _G.BSMTConfigData[configKey] = ""
+    end)
+
+    self._keybindRow = keybindRow
 end
 
 function windowHandler:SetKeybind(keybind)
@@ -3786,30 +3962,8 @@ function windowHandler:SetKeybind(keybind)
             end
         end
     end
-    
-    local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
-    self.CurrentKeybind = keyCode
-    
-    if self._keybindConnection then
-        self._keybindConnection:Disconnect()
-        self._keybindConnection = nil
-    end
-    
-    -- Register on next frame so the key that triggered this call doesn't fire immediately
-    task.spawn(function()
-        task.wait()
-        self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-            if gameProcessedEvent then return end
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                if input.KeyCode == self.CurrentKeybind then
-                    local bg = self.Instance:FindFirstChild("Background")
-                    if bg then
-                        bg.Visible = not bg.Visible
-                    end
-                end
-            end
-        end)
-    end)
+    -- Just update CurrentKeybind. The permanent listener in Library.new reads it live.
+    self.CurrentKeybind = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightShift
 end
 
 -- Config Tab
@@ -3960,30 +4114,35 @@ function windowHandler:ConfigTab()
     refreshAutoLoadDropdown()
     
     configSection:Title("UI Settings")
-    
-    local currentKeybindText = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
-    local keybindButton = configSection:Button("UI Keybind: " .. currentKeybindText, function()
+
+    -- Build the button label from the REAL current keybind on the window
+    local function getUIKeybindLabel()
+        return "UI Keybind: " .. (self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift")
+    end
+
+    local uiKeybindButton = configSection:Button(getUIKeybindLabel(), function()
+        uiKeybindButton.Instance.ButtonText.Text = "Press any key..."
         Library.Notification("Press any key...", "info", 2)
-        
+
         local connection
         local captured = false
         connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
             if captured then return end
             if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
             if input.KeyCode.Name == "Unknown" then return end
-            
+
             captured = true
-            connection:Disconnect()  -- disconnect FIRST before anything else
+            connection:Disconnect()
             connection = nil
-            
+
             local keyName = input.KeyCode.Name
-            task.wait()  -- yield one frame so this InputBegan fully ends before SetKeybind registers its listener
-            
             self:SetKeybind(keyName)
-            keybindButton.Instance.ButtonText.Text = "UI Keybind: " .. keyName
+            uiKeybindButton.Instance.ButtonText.Text = getUIKeybindLabel()
             Library.Notification("Keybind changed to: " .. keyName, "success", 2)
         end)
     end)
+    -- Alias for backwards compat
+    local keybindButton = uiKeybindButton
     
     return configTab
 end
