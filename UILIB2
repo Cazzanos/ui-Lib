@@ -2392,7 +2392,9 @@ function tabHandler:Section(sectionTitle: string) -- Add option to make on left 
 		local pageScrollingFrameContentSizeY = math.huge
 		
 		for _, scrollingFrame in ipairs(self.ElementToParentChildren:GetChildren()) do
+			if not scrollingFrame:IsA("ScrollingFrame") then continue end
 			local list = scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
+			if not list then continue end
 			if pageScrollingFrameContentSizeY > list.AbsoluteContentSize.Y then
 				pageScrollingFrame = scrollingFrame
 				pageScrollingFrameContentSizeY = list.AbsoluteContentSize.Y
@@ -4338,16 +4340,6 @@ function windowHandler:AutoMobileButton(imageId)
     
     return isMobile
 end
-
--- ╔══════════════════════════════════════════════╗
--- ║  Global shorthand: notify(msg) or            ║
--- ║  notify(msg, "success"/"error"/"warning")    ║
--- ╚══════════════════════════════════════════════╝
-_G.Notify = function(message, notifType, duration)
-	return Library.Notification(message, notifType, duration)
-end
-
--- Expose settings globally for scripters
 _G.BSMTSettings = Library.Settings
 
 return Library
