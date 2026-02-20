@@ -2588,6 +2588,8 @@ function elementHandler:Button(buttonName: string, callback): table -- Add Callb
 	buttonInstance.Parent = self.ElementToParentChildren
 	buttonInstance.ButtonText.Size = UDim2.new(1,-(buttonInstance.CircleBackground.AbsoluteSize.X + textOffset),1,0)
 	buttonInstance.ButtonText.Position = UDim2.fromOffset(buttonInstance.CircleBackground.AbsoluteSize.X + textOffset,0)
+
+	return button
 end
 
 function elementHandler:Dropdown(dropdownName: string): table
@@ -3809,9 +3811,13 @@ function toggleHandler:Set(bool, callback)
     end
 end
 
--- ─── ToggleHandler: low-level key code binder (internal) ───────────────────────
--- Binds a KeyCode directly. Used by both the old API and the new BindKey UI.
+-- ─────────────────────────────────────────────────────────────────────────────
+-- toggleHandler:BindKeyCode(keyCode)   [internal]
+--   Attaches a low-level UIS listener. When the key is pressed it calls
+--   self:Apply(not self.Enabled, true) which updates visuals AND fires Callback.
+-- ─────────────────────────────────────────────────────────────────────────────
 function toggleHandler:BindKeyCode(keyCode)
+    -- Disconnect any existing listener first
     if self._keyConnection then
         self._keyConnection:Disconnect()
         self._keyConnection = nil
@@ -3819,107 +3825,135 @@ function toggleHandler:BindKeyCode(keyCode)
     self._boundKeyCode = keyCode or nil
     if not keyCode then return end
 
+    -- Capture self.Callback at bind time so it can never be nil inside the closure
+    local cb = self.Callback
+
     self._keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == self._boundKeyCode then
-                self:Apply(not self.Enabled, true)
-            end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if input.KeyCode ~= self._boundKeyCode then return end
+        -- Flip state: updates visuals + fires the user callback
+        self.Enabled = not self.Enabled
+
+        local tweenTime = .275
+        local toggleImage = self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage
+        local toggleImageCorner = toggleImage.ToggleImageCorner
+        if self.Enabled then
+            TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),  {CornerRadius = UDim.new(0,0)}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Rotation = 360}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Size = UDim2.fromScale(1,1)}):Play()
+        else
+            TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5,0)}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Rotation = 0}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Size = UDim2.fromScale(0,0)}):Play()
         end
+
+        -- Save to config
+        if self.ConfigIdentifier then
+            _G.BSMTConfigData[self.ConfigIdentifier] = self.Enabled
+        end
+
+        -- Fire the user's callback with the new state
+        if cb then cb(self.Enabled) end
     end)
 end
 
--- ─── ToggleHandler:BindKey(arg) ──────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+-- toggleHandler:BindKey(arg, defaultKeyName?)
 --
--- TWO modes depending on what arg is:
+--   MODE 1 – no arg / nil
+--     Adds a clickable keybind UI row with no default key set.
+--     myToggle:BindKey()
 --
---  1. STRING that is a key name (e.g. "X", "LeftShift")
---     → Old behaviour: immediately bind that key, no UI created.
---       myToggle:BindKey("X")
+--   MODE 2 – arg is a KeyCode name  (e.g. "RightShift", "X", "F")
+--     Silently binds that key with NO UI row.
+--     myToggle:BindKey("RightShift")
 --
---  2. STRING that is a label (e.g. "Rocket Spam Keybind")
---     → New behaviour: add a clickable keybind row BELOW the toggle in the UI.
---       User clicks it, presses a key, key is bound + saved to config.
---       myToggle:BindKey("Rocket Spam Keybind")
+--   MODE 3 – arg is a plain label string (e.g. "Set a Keybind")
+--     Adds a clickable keybind UI row with that label.
+--     Optional 2nd arg sets a default key shown in the box on first load.
+--     myToggle:BindKey("Set a Keybind")
+--     myToggle:BindKey("Set a Keybind", "RightShift")
 --
--- Pass nil to remove the binding.
-function toggleHandler:BindKey(arg)
-    -- Remove old binding first
+--   Right-click any keybind row to clear it.
+--   Keybinds are stored in _G.BSMTConfigData and saved when you call SaveConfig.
+-- ─────────────────────────────────────────────────────────────────────────────
+function toggleHandler:BindKey(arg, defaultKeyName)
+    -- Clear any previous binding
     self:BindKeyCode(nil)
-    if arg == nil then return end
 
     local function getKeyCode(name)
+        if not name then return nil end
         for _, kc in pairs(Enum.KeyCode:GetEnumItems()) do
             if kc.Name:lower() == name:lower() then return kc end
         end
         return nil
     end
 
-    -- Detect mode: if arg resolves to a known KeyCode, bind directly (old API)
-    local directCode = getKeyCode(arg)
-    if directCode then
-        self:BindKeyCode(directCode)
-        return
+    -- ── MODE 2: arg is a known key name → bind silently, no UI ───────────────
+    if arg ~= nil then
+        local directCode = getKeyCode(arg)
+        if directCode then
+            self:BindKeyCode(directCode)
+            return
+        end
     end
 
-    -- ── New mode: arg is a UI label ──────────────────────────────────────────
-    -- We need to insert a keybind row after the toggle's instance.
-    -- The toggle knows its parent container via self.Instance.Parent
-    local label       = arg
-    local configKey   = (self.ConfigIdentifier or self.IdentifierText or "toggle") .. "_keybind"
-    local parent      = self.Instance and self.Instance.Parent
+    -- ── MODES 1 & 3: create a keybind UI row ─────────────────────────────────
+    local label      = (arg ~= nil and tostring(arg) ~= "") and tostring(arg) or "Keybind"
+    local configKey  = (self.ConfigIdentifier or self.IdentifierText or "toggle") .. "_keybind"
+    local parent     = self.Instance and self.Instance.Parent
 
     if not parent then
-        warn("BSMT BindKey: toggle has no parent yet. Call BindKey after adding to section.")
+        warn("BSMT BindKey: call BindKey AFTER adding the toggle to a section.")
         return
     end
 
-    -- Build the keybind row using the same styling as the existing Keybind element template
+    -- Build the UI row (same template as the standalone Keybind element)
     local keybindRow     = originalElements.Keybind:Clone()
     local keyText        = keybindRow.BoxBackground.InnerBox.KeyText
     local boxBackground  = keybindRow.BoxBackground
     local keybindTextLbl = keybindRow.KeybindText
-    local keybindTextPad = 4
-    local pressMsg       = "None"
 
-    keybindTextLbl.Text  = label
-    keyText.Text         = pressMsg
+    keybindTextLbl.Text = label
+    keyText.Text        = "None"
 
-    -- Size the box properly (same logic as elementHandler:Keybind)
     boxBackground.BoxAspect:Destroy()
     keybindRow.Parent = parent
 
     task.defer(function()
-        local origSize = boxBackground.AbsoluteSize
-        boxBackground.Size = UDim2.fromOffset(origSize.X, origSize.Y)
-        keybindTextLbl.Size = UDim2.new(1, -(origSize.X + keybindTextPad), 1, 0)
+        local s = boxBackground.AbsoluteSize
+        boxBackground.Size   = UDim2.fromOffset(s.X, s.Y)
+        keybindTextLbl.Size  = UDim2.new(1, -(s.X + 4), 1, 0)
     end)
 
-    -- Restore from config if saved
+    -- Restore from saved config (takes priority over defaultKeyName)
     local savedKeyName = _G.BSMTConfigData[configKey]
-    if savedKeyName and savedKeyName ~= "" then
-        local savedCode = getKeyCode(savedKeyName)
-        if savedCode then
-            keyText.Text = savedKeyName
-            self:BindKeyCode(savedCode)
+    local startKey     = (savedKeyName and savedKeyName ~= "") and savedKeyName or defaultKeyName
+
+    if startKey then
+        local startCode = getKeyCode(startKey)
+        if startCode then
+            keyText.Text = startKey
+            self:BindKeyCode(startCode)
         end
     end
 
-    -- Register in config elements so LoadConfig can restore
+    -- Register so LoadConfig can restore the keybind row's display text
     _G.BSMTConfigElements[configKey] = {
         Type     = "ToggleKeybind",
         toggle   = self,
         instance = keyText,
     }
 
-    -- Click handler: listen for next key
+    -- Click → listen for next key press
     local isListening = false
     local listenConn  = nil
 
     keybindRow.MouseButton1Click:Connect(function()
         if isListening then return end
-        isListening    = true
-        keyText.Text   = "Press key..."
+        isListening  = true
+        keyText.Text = "Press key..."
 
         if listenConn then listenConn:Disconnect() end
         listenConn = UserInputService.InputBegan:Connect(function(input, _gpe)
@@ -3932,24 +3966,23 @@ function toggleHandler:BindKey(arg)
 
             local keyName = input.KeyCode.Name
             keyText.Text  = keyName
-
-            -- Bind the key
             self:BindKeyCode(input.KeyCode)
 
-            -- Save to config
+            -- Store in config data (persisted when user clicks Save Config)
             _G.BSMTConfigData[configKey] = keyName
 
-            Library.Notification("Bound '" .. label .. "' → " .. keyName, "success", 2)
+            Library.Notification(label .. " → " .. keyName, "success", 2)
         end)
     end)
 
-    -- Right-click clears the binding
+    -- Right-click → clear binding
     keybindRow.MouseButton2Click:Connect(function()
         if listenConn then listenConn:Disconnect() listenConn = nil end
         isListening = false
         keyText.Text = "None"
         self:BindKeyCode(nil)
         _G.BSMTConfigData[configKey] = ""
+        Library.Notification(label .. " cleared", "info", 2)
     end)
 
     self._keybindRow = keybindRow
@@ -4116,35 +4149,59 @@ function windowHandler:ConfigTab()
     refreshAutoLoadDropdown()
     
     configSection:Title("UI Settings")
+    configSection:Label("UI Visibility Keybind")
 
-    -- Build the button label from the REAL current keybind on the window
-    local function getUIKeybindLabel()
-        return "UI Keybind: " .. (self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift")
-    end
+    -- Build a proper keybind row that updates window.CurrentKeybind when pressed
+    do
+        local keybindRow     = originalElements.Keybind:Clone()
+        local keyText        = keybindRow.BoxBackground.InnerBox.KeyText
+        local boxBackground  = keybindRow.BoxBackground
+        local keybindTextLbl = keybindRow.KeybindText
 
-    local uiKeybindButton = configSection:Button(getUIKeybindLabel(), function()
-        uiKeybindButton.Instance.ButtonText.Text = "Press any key..."
-        Library.Notification("Press any key...", "info", 2)
+        keybindTextLbl.Text  = "Show / Hide UI"
+        keyText.Text         = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
 
-        local connection
-        local captured = false
-        connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if captured then return end
-            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-            if input.KeyCode.Name == "Unknown" then return end
+        boxBackground.BoxAspect:Destroy()
+        keybindRow.Parent = configSection.ElementToParentChildren
 
-            captured = true
-            connection:Disconnect()
-            connection = nil
-
-            local keyName = input.KeyCode.Name
-            self:SetKeybind(keyName)
-            uiKeybindButton.Instance.ButtonText.Text = getUIKeybindLabel()
-            Library.Notification("Keybind changed to: " .. keyName, "success", 2)
+        task.defer(function()
+            local origSize = boxBackground.AbsoluteSize
+            boxBackground.Size = UDim2.fromOffset(origSize.X, origSize.Y)
+            keybindTextLbl.Size = UDim2.new(1, -(origSize.X + 4), 1, 0)
         end)
-    end)
-    -- Alias for backwards compat
-    local keybindButton = uiKeybindButton
+
+        local isListening = false
+        local listenConn  = nil
+
+        keybindRow.MouseButton1Click:Connect(function()
+            if isListening then return end
+            isListening      = true
+            keyText.Text     = "Press key..."
+
+            if listenConn then listenConn:Disconnect() end
+            listenConn = UserInputService.InputBegan:Connect(function(input, _gpe)
+                if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                if input.KeyCode.Name == "Unknown" then return end
+
+                isListening = false
+                listenConn:Disconnect()
+                listenConn = nil
+
+                local keyName = input.KeyCode.Name
+                self:SetKeybind(keyName)
+                keyText.Text = keyName
+                Library.Notification("UI keybind → " .. keyName, "success", 2)
+            end)
+        end)
+
+        -- Right-click resets to RightShift
+        keybindRow.MouseButton2Click:Connect(function()
+            if listenConn then listenConn:Disconnect() listenConn = nil end
+            isListening = false
+            self:SetKeybind("RightShift")
+            keyText.Text = "RightShift"
+        end)
+    end
     
     return configTab
 end
@@ -4341,6 +4398,10 @@ function windowHandler:AutoMobileButton(imageId)
     return isMobile
 end
 
+-- ╔══════════════════════════════════════════════╗
+-- ║  Global shorthand: notify(msg) or            ║
+-- ║  notify(msg, "success"/"error"/"warning")    ║
+-- ╚══════════════════════════════════════════════╝
 _G.Notify = function(message, notifType, duration)
 	return Library.Notification(message, notifType, duration)
 end
