@@ -3916,15 +3916,14 @@ function toggleHandler:BindKey(arg, defaultKeyName)
     local keybindTextLbl = keybindRow.KeybindText
 
     keybindTextLbl.Text = label
+    keybindTextLbl.Size = UDim2.new(0, 0, 1, 0)  -- hide before parenting so no text bleeds through
     keyText.Text        = "None"
 
-    -- Parent FIRST so the engine computes AbsoluteSize, then pin the size synchronously.
-    -- Using task.defer here causes a 1-frame flash where BoxBackground fills the full width.
     keybindRow.Parent = parent
     local boxSize = boxBackground.AbsoluteSize
     boxBackground.BoxAspect:Destroy()
     boxBackground.Size  = UDim2.fromOffset(boxSize.X, boxSize.Y)
-    keybindTextLbl.Size = UDim2.new(1, -(boxSize.X + 4), 1, 0)
+    keybindTextLbl.Size = UDim2.new(1, -(boxSize.X + 4), 1, 0)  -- restore correct size
 
     -- Restore from saved config (takes priority over defaultKeyName)
     local savedKeyName = _G.BSMTConfigData[configKey]
@@ -4158,6 +4157,7 @@ function windowHandler:ConfigTab()
         local keybindTextLbl = keybindRow.KeybindText
 
         keybindTextLbl.Text  = "Show / Hide UI"
+        keybindTextLbl.Size  = UDim2.new(0, 0, 1, 0)
         keyText.Text         = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
 
         keybindRow.Parent = configSection.ElementToParentChildren
@@ -4394,6 +4394,10 @@ function windowHandler:AutoMobileButton(imageId)
     return isMobile
 end
 
+-- ╔══════════════════════════════════════════════╗
+-- ║  Global shorthand: notify(msg) or            ║
+-- ║  notify(msg, "success"/"error"/"warning")    ║
+-- ╚══════════════════════════════════════════════╝
 _G.Notify = function(message, notifType, duration)
 	return Library.Notification(message, notifType, duration)
 end
