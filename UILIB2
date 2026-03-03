@@ -3918,14 +3918,13 @@ function toggleHandler:BindKey(arg, defaultKeyName)
     keybindTextLbl.Text = label
     keyText.Text        = "None"
 
-    boxBackground.BoxAspect:Destroy()
+    -- Parent FIRST so the engine computes AbsoluteSize, then pin the size synchronously.
+    -- Using task.defer here causes a 1-frame flash where BoxBackground fills the full width.
     keybindRow.Parent = parent
-
-    task.defer(function()
-        local s = boxBackground.AbsoluteSize
-        boxBackground.Size   = UDim2.fromOffset(s.X, s.Y)
-        keybindTextLbl.Size  = UDim2.new(1, -(s.X + 4), 1, 0)
-    end)
+    local boxSize = boxBackground.AbsoluteSize
+    boxBackground.BoxAspect:Destroy()
+    boxBackground.Size  = UDim2.fromOffset(boxSize.X, boxSize.Y)
+    keybindTextLbl.Size = UDim2.new(1, -(boxSize.X + 4), 1, 0)
 
     -- Restore from saved config (takes priority over defaultKeyName)
     local savedKeyName = _G.BSMTConfigData[configKey]
@@ -4161,14 +4160,11 @@ function windowHandler:ConfigTab()
         keybindTextLbl.Text  = "Show / Hide UI"
         keyText.Text         = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
 
-        boxBackground.BoxAspect:Destroy()
         keybindRow.Parent = configSection.ElementToParentChildren
-
-        task.defer(function()
-            local origSize = boxBackground.AbsoluteSize
-            boxBackground.Size = UDim2.fromOffset(origSize.X, origSize.Y)
-            keybindTextLbl.Size = UDim2.new(1, -(origSize.X + 4), 1, 0)
-        end)
+        local origSize = boxBackground.AbsoluteSize
+        boxBackground.BoxAspect:Destroy()
+        boxBackground.Size  = UDim2.fromOffset(origSize.X, origSize.Y)
+        keybindTextLbl.Size = UDim2.new(1, -(origSize.X + 4), 1, 0)
 
         local isListening = false
         local listenConn  = nil
@@ -4398,10 +4394,6 @@ function windowHandler:AutoMobileButton(imageId)
     return isMobile
 end
 
--- ╔══════════════════════════════════════════════╗
--- ║  Global shorthand: notify(msg) or            ║
--- ║  notify(msg, "success"/"error"/"warning")    ║
--- ╚══════════════════════════════════════════════╝
 _G.Notify = function(message, notifType, duration)
 	return Library.Notification(message, notifType, duration)
 end
