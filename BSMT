@@ -1,5 +1,5 @@
-_G.JxereasExistingHooks = _G.JxereasExistingHooks or {}
-if not _G.JxereasExistingHooks.GuiDetectionBypass then
+_G.BSMTExistingHooks = _G.BSMTExistingHooks or {}
+if not _G.BSMTExistingHooks.GuiDetectionBypass then
     local CoreGui = game.CoreGui
     local ContentProvider = game.ContentProvider
     local RobloxGuis = {"RobloxGui", "TeleportGui", "RobloxPromptGui", "RobloxLoadingGui", "PlayerList", "RobloxNetworkPauseNotification", "PurchasePrompt", "HeadsetDisconnectedDialog", "ThemeProvider", "DevConsoleMaster"}
@@ -9,7 +9,7 @@ if not _G.JxereasExistingHooks.GuiDetectionBypass then
     
     if not hookfunc then
         warn("Executor doesn't support function hooking - GUI detection bypass disabled")
-        _G.JxereasExistingHooks.GuiDetectionBypass = true
+        _G.BSMTExistingHooks.GuiDetectionBypass = true
         return
     end
 
@@ -111,7 +111,7 @@ if not _G.JxereasExistingHooks.GuiDetectionBypass then
         return old(self, ...)
     end)
     
-    _G.JxereasExistingHooks.GuiDetectionBypass = true
+    _G.BSMTExistingHooks.GuiDetectionBypass = true
 end
 
 local Players = game:GetService("Players")
@@ -132,10 +132,123 @@ local GuiService = game:GetService("GuiService")
 local mouse = player:GetMouse()
 local viewPortSize = workspace.CurrentCamera.ViewportSize
 
+-- ╔══════════════════════════════════════════════╗
+-- ║   BSMT – Responsive Design System            ║
+-- ╚══════════════════════════════════════════════╝
+
+-- Touch present but no real mouse => treat as a mobile/touch device.
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+local scaleFactor = math.clamp(viewPortSize.Y / 1080, 0.6, 1.4)
+-- Mobile gets a stronger scale boost so every control is comfortably tappable.
+local mobileScale = isMobile and math.clamp(viewPortSize.Y / 900, 1.15, 1.9) or 1.0
+
+-- Theme: single source of truth for all colours
+local Theme = {
+	Background      = Color3.fromRGB(24, 25, 32),
+	Heading         = Color3.fromRGB(40, 41, 52),
+	Panel           = Color3.fromRGB(31, 31, 43),
+	Element         = Color3.fromRGB(59, 59, 71),
+	ElementInner    = Color3.fromRGB(0, 0, 0),
+	ElementCenter   = Color3.fromRGB(31, 31, 43),
+	Accent          = Color3.fromRGB(163, 33, 38),
+	AccentBright    = Color3.fromRGB(255, 0, 0),
+	Text            = Color3.fromRGB(255, 255, 255),
+	TextMuted       = Color3.fromRGB(109, 110, 119),
+	TextDim         = Color3.fromRGB(139, 141, 147),
+	Stroke          = Color3.fromRGB(58, 60, 78),  -- subtle element/window outline
+	Shadow          = Color3.fromRGB(0, 0, 0),
+}
+
+-- Returns `base` on desktop (look unchanged) and a larger, touch-friendly
+-- value on mobile that is never smaller than `minMobile`.
+local function metric(base, minMobile)
+	if isMobile then
+		return math.max(minMobile or 0, math.round(base * mobileScale))
+	end
+	return base
+end
+
+-- Metrics: compact on desktop, enlarged for touch on mobile
+local M = {
+	ElementH    = metric(18, 32),
+	ToggleH     = metric(14, 28),
+	SliderH     = metric(32, 52),
+	TabH        = metric(28, 44),
+	SectionHead = metric(22, 32),
+	TextSize    = isMobile and math.clamp(math.round(15 * mobileScale), 16, 22) or 14,
+	TextSizeSm  = isMobile and math.clamp(math.round(13 * mobileScale), 14, 20) or 13,
+	Pad         = metric(4, 6),
+	PadLg       = metric(5, 8),
+	Border      = 1,
+	Corner      = isMobile and 6 or 5,  -- rounded-corner radius for elements
+}
+
+-- Tab-rail / page split. These are complementary so the rail and the active
+-- page never overlap (previously they did on mobile, clipping content).
+local TAB_W  = isMobile and 0.34 or 0.225
+local PAGE_W = 1 - TAB_W
+
+-- ── Cosmetic helpers ────────────────────────────────────────────────────────
+-- Round an instance's corners.
+local function Round(inst, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or M.Corner)
+	corner.Parent = inst
+	return corner
+end
+
+-- Add a thin outline around an instance.
+local function Stroke(inst, color, thickness, transparency)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or Theme.Stroke
+	stroke.Thickness = thickness or 1
+	stroke.Transparency = transparency or 0
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = inst
+	return stroke
+end
+
+-- Lightweight factory: Create(className, props) returns configured instance
+local function Create(className, props)
+	local inst = Instance.new(className)
+	for k, v in pairs(props or {}) do
+		inst[k] = v
+	end
+	return inst
+end
+
+-- Bind a ScrollingFrame's CanvasSize to its UIListLayout automatically
+local function AutoCanvasSize(scrollFrame, listLayout)
+	local function update()
+		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + listLayout.Padding.Offset)
+	end
+	listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
+	update()
+end
+
+-- Input helpers
+local function IsPrimaryInput(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1
+		or (isMobile and input.UserInputType == Enum.UserInputType.Touch)
+end
+
+-- True when a drag/press should END. On touch devices the release event fires
+-- as `Touch`, not `MouseButton1`, so drag handlers must accept both or they leak.
+local function IsReleaseInput(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch
+end
+
 local originalElements = {}
--- Add Tween Dictonary with format Tweens.ElementType.TweenName to ignore repetitive variables
+-- Add Tween Dictionary with format Tweens.ElementType.TweenName to ignore repetitive variables
 
 local Library = {}
+Library.Settings = {
+	MobileMode  = isMobile,
+	ScaleFactor = scaleFactor,
+	Theme       = Theme,
+	Metrics     = M,
+}
 local elementHandler = {}
 local windowHandler = {}
 local tabHandler = {}
@@ -227,7 +340,7 @@ local function createOriginialElements()
 		local tabsUIListLayout = Instance.new("UIListLayout")
 		local pageLogo = Instance.new("ImageLabel")
 		
-		screenGui.Name = "Cerberus"
+		screenGui.Name = "BSMT"
 		screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 		screenGui.IgnoreGuiInset = true
 		
@@ -245,7 +358,9 @@ local function createOriginialElements()
 		backgroundAspectRatioConstraint.AspectRatio = 1.531
 		
 		backgroundUICorner.Name = "BackgroundUICorner"
+		backgroundUICorner.CornerRadius = UDim.new(0, isMobile and 12 or 8)
 		backgroundUICorner.Parent = background
+		Stroke(background, Theme.Stroke, isMobile and 2 or 1, 0.15)
 		
 		pagesFolder.Name = "Pages"
 		pagesFolder.Parent = background
@@ -262,7 +377,14 @@ local function createOriginialElements()
 		heading.TextSize = 14.000
 
 		headingUICorner.Name = "HeadingUICorner"
+		headingUICorner.CornerRadius = UDim.new(0, isMobile and 12 or 8)
 		headingUICorner.Parent = heading
+
+		local headingGradient = Instance.new("UIGradient")
+		headingGradient.Name = "HeadingGradient"
+		headingGradient.Rotation = 90
+		headingGradient.Color = ColorSequence.new(Color3.fromRGB(48, 49, 62), Color3.fromRGB(36, 37, 48))
+		headingGradient.Parent = heading
 
 		buttonHolder.Name = "ButtonHolder"
 		buttonHolder.Parent = heading
@@ -351,9 +473,9 @@ local function createOriginialElements()
 		title.Size = UDim2.new(0.25, 0, 0.899999976, 0)
 		title.Font = Enum.Font.GothamBold
 		title.LineHeight = 0.800
-		title.Text = "Cerberus"
+		title.Text = "BSMT"
 		title.TextColor3 = Color3.fromRGB(255, 255, 255)
-		title.TextSize = 14.000
+		title.TextSize = M.TextSize
 		title.TextXAlignment = Enum.TextXAlignment.Left
 
 		titleUIPadding.Name = "TitleUIPadding"
@@ -375,8 +497,11 @@ local function createOriginialElements()
 		tabs.BackgroundColor3 = Color3.fromRGB(31, 31, 43)
 		tabs.BorderSizePixel = 0
 		tabs.Position = UDim2.new(0, 5, 1, -5)
-		tabs.Size = UDim2.new(0.225, 0, 1, -15)
+		-- Rail width is complementary to the page width so they never overlap.
+		tabs.Size = UDim2.new(TAB_W, 0, 1, -15)
 		tabs.ScrollBarThickness = 0
+		Round(tabs, M.Corner + 1)
+		Stroke(tabs, Theme.Stroke, 1, 0.35)
 
 		tabsUIListLayout.Name = "TabsUIListLayout"
 		tabsUIListLayout.Parent = tabs
@@ -389,7 +514,7 @@ local function createOriginialElements()
 		pageLogo.BackgroundTransparency = 1.000
 		pageLogo.BorderSizePixel = 0
 		pageLogo.Position = UDim2.new(1, -10, 1, -5)
-		pageLogo.Size = UDim2.new(0.774999976, -25, 1, -15)
+		pageLogo.Size = UDim2.new(PAGE_W, -25, 1, -15)
 		pageLogo.ZIndex = 0
 		pageLogo.Image = "rbxassetid://11435586663"
 		pageLogo.ImageColor3 = Color3.fromRGB(109, 110, 119)
@@ -412,7 +537,7 @@ local function createOriginialElements()
 		tab.BackgroundColor3 = Color3.fromRGB(37, 37, 51)
 		tab.BackgroundTransparency = 1.000
 		tab.BorderSizePixel = 0
-		tab.Size = UDim2.new(1, 0, 0, 27.5)
+		tab.Size = UDim2.new(1, 0, 0, M.TabH)
 		tab.AutoButtonColor = false
 		tab.Font = Enum.Font.SourceSans
 		tab.Text = ""
@@ -429,7 +554,7 @@ local function createOriginialElements()
 		tabText.Font = Enum.Font.SourceSans
 		tabText.Text = "N/A"
 		tabText.TextColor3 = Color3.fromRGB(109, 110, 119)
-		tabText.TextSize = 18.000
+		tabText.TextSize = M.TextSize + 2
 		tabText.TextXAlignment = Enum.TextXAlignment.Left
 		tabText.ClipsDescendants = true
 
@@ -459,7 +584,9 @@ local function createOriginialElements()
 		tabSeperatorUICorner.CornerRadius = UDim.new(0, 2)
 		tabSeperatorUICorner.Name = "TabSeperatorUICorner"
 		tabSeperatorUICorner.Parent = tabSeperator
-		
+
+		Round(tab, M.Corner)
+
 		return tab
 	end
 	
@@ -477,7 +604,7 @@ local function createOriginialElements()
 		page.BorderSizePixel = 0
 		page.Position = UDim2.new(1, -10, 1, -5)
 		page.Visible = false
-		page.Size = UDim2.new(.775,-25,0,0)
+		page.Size = UDim2.new(PAGE_W,-25,0,0)
 
 		leftScrollingFrame.Name = "LeftScrollingFrame"
 		leftScrollingFrame.Active = true
@@ -508,6 +635,13 @@ local function createOriginialElements()
 		rightScrollingFrameList.Padding = UDim.new(0,7)
 		rightScrollingFrameList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		rightScrollingFrameList.Parent = rightScrollingFrame
+
+			-- Mobile: collapse to a single, full-width column for readability.
+			if isMobile then
+				leftScrollingFrame.Size = UDim2.new(1, 0, 1, 0)
+				rightScrollingFrame.Visible = false
+				rightScrollingFrame.Size = UDim2.new(0, 0, 1, 0)
+			end
 		
 		return page
 	end
@@ -529,12 +663,20 @@ local function createOriginialElements()
 		section.BorderSizePixel = 0
 		section.Size = UDim2.new(1, 0, 0, 200)
 		section.ClipsDescendants = true
+		Round(section, M.Corner + 2)
+		Stroke(section, Theme.Stroke, 1, 0.25)
 
 		heading.Name = "Heading"
 		heading.Parent = section
 		heading.BackgroundColor3 = Color3.fromRGB(40, 41, 52)
 		heading.BorderSizePixel = 0
-		heading.Size = UDim2.new(1, 0, 0, 22)
+		heading.Size = UDim2.new(1, 0, 0, M.SectionHead)
+
+		local sectionHeadingGradient = Instance.new("UIGradient")
+		sectionHeadingGradient.Name = "SectionHeadingGradient"
+		sectionHeadingGradient.Rotation = 90
+		sectionHeadingGradient.Color = ColorSequence.new(Color3.fromRGB(48, 49, 62), Color3.fromRGB(36, 37, 48))
+		sectionHeadingGradient.Parent = heading
 
 		headingSeperator.Name = "HeadingSeperator"
 		headingSeperator.Parent = heading
@@ -552,7 +694,7 @@ local function createOriginialElements()
 		title.Font = Enum.Font.GothamMedium
 		title.Text = "N/A"
 		title.TextColor3 = Color3.fromRGB(255, 255, 255)
-		title.TextSize = 14.000
+		title.TextSize = M.TextSize
 		title.TextXAlignment = Enum.TextXAlignment.Left
 		title.ClipsDescendants = true
 
@@ -577,7 +719,7 @@ local function createOriginialElements()
 		elementHolder.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		elementHolder.BackgroundTransparency = 1.000
 		elementHolder.BorderSizePixel = 0
-		elementHolder.Position = UDim2.new(0, 0, 0, 22)
+		elementHolder.Position = UDim2.new(0, 0, 0, M.SectionHead)
 		elementHolder.Size = UDim2.new(1, 0, 0, 178)
 		elementHolder.ClipsDescendants = true
 
@@ -606,7 +748,7 @@ local function createOriginialElements()
 		title.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		title.BackgroundTransparency = 1.000
 		title.BorderSizePixel = 0
-		title.Size = UDim2.new(1, 0, 0, 14)
+		title.Size = UDim2.new(1, 0, 0, M.ToggleH)
 
 		titleText.Name = "TitleText"
 		titleText.Parent = title
@@ -619,7 +761,7 @@ local function createOriginialElements()
 		titleText.Font = Enum.Font.GothamMedium
 		titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 		titleText.Text = "N/A"
-		titleText.TextSize = 14.000
+		titleText.TextSize = M.TextSize
 
 		design.Name = "Design"
 		design.Parent = title
@@ -647,7 +789,7 @@ local function createOriginialElements()
 		label.Name = "Label"
 		label.BackgroundColor3 = Color3.fromRGB(59, 59, 71)
 		label.BorderSizePixel = 0
-		label.Size = UDim2.new(1, 0, 0, 18)
+		label.Size = UDim2.new(1, 0, 0, M.ElementH)
 
 		labelPadding.Name = "LabelPadding"
 		labelPadding.Parent = label
@@ -672,7 +814,7 @@ local function createOriginialElements()
 		labelText.ZIndex = 2
 		labelText.Font = Enum.Font.GothamMedium
 		labelText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		labelText.TextSize = 14.000
+		labelText.TextSize = M.TextSizeSm
 		labelText.TextWrapped = true
 		labelText.TextXAlignment = Enum.TextXAlignment.Left
 		labelText.TextYAlignment = Enum.TextYAlignment.Top
@@ -690,6 +832,10 @@ local function createOriginialElements()
 		labelBackgroundPadding.PaddingLeft = UDim.new(0, 1)
 		labelBackgroundPadding.PaddingRight = UDim.new(0, 1)
 		labelBackgroundPadding.PaddingTop = UDim.new(0, 1)
+
+		Round(label, M.Corner)
+		Round(labelBackground, M.Corner - 1)
+		Round(labelText, M.Corner - 1)
 		
 		return label
 	end
@@ -710,7 +856,7 @@ local function createOriginialElements()
 		toggle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		toggle.BackgroundTransparency = 1.000
 		toggle.BorderSizePixel = 0
-		toggle.Size = UDim2.new(1, 0, 0, 14)
+		toggle.Size = UDim2.new(1, 0, 0, M.ToggleH)
 		toggle.AutoButtonColor = false
 		toggle.Font = Enum.Font.SourceSans
 		toggle.Text = ""
@@ -726,7 +872,7 @@ local function createOriginialElements()
 		toggleText.Font = Enum.Font.Gotham
 		toggleText.Text = "N/A"
 		toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		toggleText.TextSize = 14.000
+		toggleText.TextSize = M.TextSize
 		toggleText.TextXAlignment = Enum.TextXAlignment.Left
 
 		boxBackground.Name = "BoxBackground"
@@ -781,6 +927,10 @@ local function createOriginialElements()
 		toggleImageCorner.Name = "ToggleImageCorner"
 		toggleImageCorner.CornerRadius = UDim.new(.5,0)
 		toggleImageCorner.Parent = toggleImage
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(centerBox, M.Corner - 1)
 		
 		return toggle
 	end
@@ -805,7 +955,7 @@ local function createOriginialElements()
 		button.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		button.BackgroundTransparency = 1.000
 		button.BorderSizePixel = 0
-		button.Size = UDim2.new(1, 0, 0, 14)
+		button.Size = UDim2.new(1, 0, 0, M.ToggleH)
 		button.AutoButtonColor = false
 		button.Font = Enum.Font.SourceSans
 		button.Text = ""
@@ -821,7 +971,7 @@ local function createOriginialElements()
 		buttonText.Font = Enum.Font.Gotham
 		buttonText.Text = "Button"
 		buttonText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		buttonText.TextSize = 14.000
+		buttonText.TextSize = M.TextSize
 		buttonText.TextXAlignment = Enum.TextXAlignment.Left
 
 		circleBackground.Name = "CircleBackground"
@@ -921,13 +1071,14 @@ local function createOriginialElements()
 		dropdown.BackgroundTransparency = 1.000
 		dropdown.BorderSizePixel = 0
 		dropdown.ClipsDescendants = true
-		dropdown.Size = UDim2.new(1, 0, 0, 18)
+		dropdown.Size = UDim2.new(1, 0, 0, M.ElementH)
+		Round(dropdown, M.Corner)
 
 		dropdownButton.Name = "DropdownButton"
 		dropdownButton.Parent = dropdown
 		dropdownButton.BackgroundColor3 = Color3.fromRGB(59, 59, 71)
 		dropdownButton.BorderSizePixel = 0
-		dropdownButton.Size = UDim2.new(1, 0, 0, 18)
+		dropdownButton.Size = UDim2.new(1, 0, 0, M.ElementH)
 		dropdownButton.AutoButtonColor = false
 		dropdownButton.Font = Enum.Font.SourceSans
 		dropdownButton.Text = ""
@@ -953,7 +1104,7 @@ local function createOriginialElements()
 		dropdownText.Text = "N/A"
 		dropdownText.TextColor3 = Color3.fromRGB(255, 255, 255)
 		dropdownText.TextScaled = false
-		dropdownText.TextSize = 14.000
+		dropdownText.TextSize = M.TextSize
 		dropdownText.TextWrapped = true
 		dropdownText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -1001,7 +1152,7 @@ local function createOriginialElements()
 		elementHolder.Active = true
 		elementHolder.BackgroundColor3 = Color3.fromRGB(59, 59, 71)
 		elementHolder.BorderSizePixel = 0
-		elementHolder.Position = UDim2.new(0, 0, 0, 18)
+		elementHolder.Position = UDim2.new(0, 0, 0, M.ElementH)
 		elementHolder.Size = UDim2.new(0.925000012, 0, 0, 0)
 		elementHolder.CanvasSize = UDim2.new(0, 0, 0, 0)
 		elementHolder.ScrollBarThickness = 0
@@ -1063,14 +1214,14 @@ local function createOriginialElements()
 		sliderElement.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		sliderElement.BackgroundTransparency = 1.000
 		sliderElement.BorderSizePixel = 0
-		sliderElement.Size = UDim2.new(1, 0, 0, 32)
+		sliderElement.Size = UDim2.new(1, 0, 0, M.SliderH)
 
 		textGrouping.Name = "TextGrouping"
 		textGrouping.Parent = sliderElement
 		textGrouping.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		textGrouping.BackgroundTransparency = 1.000
 		textGrouping.BorderSizePixel = 0
-		textGrouping.Size = UDim2.new(1, 0, 0, 14)
+		textGrouping.Size = UDim2.new(1, 0, 0, M.ToggleH)
 
 		numberText.Name = "NumberText"
 		numberText.Parent = textGrouping
@@ -1085,7 +1236,7 @@ local function createOriginialElements()
 		numberText.PlaceholderText = ""
 		numberText.Text = "0"
 		numberText.TextColor3 = Color3.fromRGB(139, 141, 147)
-		numberText.TextSize = 14.000
+		numberText.TextSize = M.TextSize
 		numberText.TextXAlignment = Enum.TextXAlignment.Right
 		numberText.ClipsDescendants = true
 		
@@ -1098,7 +1249,7 @@ local function createOriginialElements()
 		sliderText.Font = Enum.Font.Gotham
 		sliderText.Text = "N/A"
 		sliderText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		sliderText.TextSize = 14.000
+		sliderText.TextSize = M.TextSize
 		sliderText.ClipsDescendants = true
 		sliderText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -1142,6 +1293,10 @@ local function createOriginialElements()
 		emptySliderBackground.Size = UDim2.new(1, 0, 1, 0)
 		emptySliderBackground.ZIndex = 0
 
+		Round(sliderBackground, M.Corner)
+		Round(sliderInnerBackground, M.Corner - 1)
+		Round(emptySliderBackground, M.Corner - 1)
+
 		slider.Name = "Slider"
 		slider.Parent = sliderInnerBackground
 		slider.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
@@ -1182,13 +1337,14 @@ local function createOriginialElements()
 		searchBar.BackgroundTransparency = 1.000
 		searchBar.BorderSizePixel = 0
 		searchBar.ClipsDescendants = true
-		searchBar.Size = UDim2.new(1, 0, 0, 18)
+		searchBar.Size = UDim2.new(1, 0, 0, M.ElementH)
+		Round(searchBar, M.Corner)
 
 		searchBarFrame.Name = "SearchBarFrame"
 		searchBarFrame.Parent = searchBar
 		searchBarFrame.BackgroundColor3 = Color3.fromRGB(59, 59, 71)
 		searchBarFrame.BorderSizePixel = 0
-		searchBarFrame.Size = UDim2.new(1, 0, 0, 18)
+		searchBarFrame.Size = UDim2.new(1, 0, 0, M.ElementH)
 
 		buttonBackgroundPadding.Name = "ButtonBackgroundPadding"
 		buttonBackgroundPadding.Parent = searchBarFrame
@@ -1217,7 +1373,7 @@ local function createOriginialElements()
 		searchBox.PlaceholderText = "N/A"
 		searchBox.Text = ""
 		searchBox.TextColor3 = Color3.fromRGB(139, 141, 147)
-		searchBox.TextSize = 14.000
+		searchBox.TextSize = M.TextSize
 		searchBox.TextXAlignment = Enum.TextXAlignment.Left
 
 		searchBoxPadding.Name = "SearchBoxPadding"
@@ -1256,7 +1412,7 @@ local function createOriginialElements()
 		elementHolder.Active = true
 		elementHolder.BackgroundColor3 = Color3.fromRGB(59, 59, 71)
 		elementHolder.BorderSizePixel = 0
-		elementHolder.Position = UDim2.new(0, 0, 0, 18)
+		elementHolder.Position = UDim2.new(0, 0, 0, M.ElementH)
 		elementHolder.Size = UDim2.new(0.925000012, 0, 0, 0)
 		elementHolder.CanvasSize = UDim2.new(0, 0, 0, 0)
 		elementHolder.ScrollBarThickness = 0
@@ -1316,7 +1472,7 @@ local function createOriginialElements()
 		keybind.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		keybind.BackgroundTransparency = 1.000
 		keybind.BorderSizePixel = 0
-		keybind.Size = UDim2.new(1, 0, 0, 18)
+		keybind.Size = UDim2.new(1, 0, 0, M.ElementH)
 		keybind.AutoButtonColor = false
 		keybind.Font = Enum.Font.SourceSans
 		keybind.Text = ""
@@ -1331,7 +1487,7 @@ local function createOriginialElements()
 		keybindText.Font = Enum.Font.Gotham
 		keybindText.Text = "N/A"
 		keybindText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		keybindText.TextSize = 14.000
+		keybindText.TextSize = M.TextSize
 		keybindText.ClipsDescendants = true
 		keybindText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -1376,7 +1532,11 @@ local function createOriginialElements()
 		keyText.Font = Enum.Font.Gotham
 		keyText.Text = "N/A"
 		keyText.TextColor3 = Color3.fromRGB(139, 141, 147)
-		keyText.TextSize = 14.000
+		keyText.TextSize = M.TextSize
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(keyText, M.Corner - 1)
 		
 		return keybind
 	end
@@ -1394,7 +1554,7 @@ local function createOriginialElements()
 		textBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		textBox.BackgroundTransparency = 1.000
 		textBox.BorderSizePixel = 0
-		textBox.Size = UDim2.new(1, 0, 0, 18)
+		textBox.Size = UDim2.new(1, 0, 0, M.ElementH)
 		textBox.AutoButtonColor = false
 		textBox.Font = Enum.Font.SourceSans
 		textBox.Text = ""
@@ -1410,7 +1570,7 @@ local function createOriginialElements()
 		textBoxNameText.Text = "Textbox"
 		textBoxNameText.ClipsDescendants = true
 		textBoxNameText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		textBoxNameText.TextSize = 14.000
+		textBoxNameText.TextSize = M.TextSize
 		textBoxNameText.TextXAlignment = Enum.TextXAlignment.Left
 
 		boxBackground.Name = "BoxBackground"
@@ -1455,7 +1615,11 @@ local function createOriginialElements()
 		textBoxText.Text = ""
 		textBoxText.TextXAlignment = Enum.TextXAlignment.Left
 		textBoxText.TextColor3 = Color3.fromRGB(139, 141, 147)
-		textBoxText.TextSize = 14.000
+		textBoxText.TextSize = M.TextSize
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(textBoxText, M.Corner - 1)
 		
 		return textBox
 	end
@@ -1519,14 +1683,14 @@ local function createOriginialElements()
 		colorWheel.BackgroundTransparency = 1.000
 		colorWheel.BorderSizePixel = 0
 		colorWheel.ClipsDescendants = true
-		colorWheel.Size = UDim2.new(1, 0, 0, 18)
+		colorWheel.Size = UDim2.new(1, 0, 0, M.ElementH)
 
 		heading.Name = "Heading"
 		heading.Parent = colorWheel
 		heading.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		heading.BackgroundTransparency = 1.000
 		heading.BorderSizePixel = 0
-		heading.Size = UDim2.new(1, 0, 0, 18)
+		heading.Size = UDim2.new(1, 0, 0, M.ElementH)
 		heading.Font = Enum.Font.SourceSans
 		heading.Text = ""
 		heading.TextColor3 = Color3.fromRGB(0, 0, 0)
@@ -1542,7 +1706,7 @@ local function createOriginialElements()
 		colorWheelName.Text = "ColorWheel"
 		colorWheelName.ClipsDescendants = true
 		colorWheelName.TextColor3 = Color3.fromRGB(255, 255, 255)
-		colorWheelName.TextSize = 14.000
+		colorWheelName.TextSize = M.TextSize
 		colorWheelName.TextXAlignment = Enum.TextXAlignment.Left
 
 		boxBackground.Name = "BoxBackground"
@@ -1669,7 +1833,7 @@ local function createOriginialElements()
 		colorText.Font = Enum.Font.Gotham
 		colorText.Text = "Red:"
 		colorText.TextColor3 = Color3.fromRGB(255, 255, 255)
-		colorText.TextSize = 14.000
+		colorText.TextSize = M.TextSize
 		colorText.TextXAlignment = Enum.TextXAlignment.Right
 
 		boxBackground_2.Name = "BoxBackground"
@@ -1712,7 +1876,7 @@ local function createOriginialElements()
 		colorValue.PlaceholderColor3 = Color3.fromRGB(139, 141, 147)
 		colorValue.Text = "255"
 		colorValue.TextColor3 = Color3.fromRGB(139, 141, 147)
-		colorValue.TextSize = 14.000
+		colorValue.TextSize = M.TextSize
 
 		green.Name = "Green"
 		green.Parent = colorInputHolder
@@ -1731,7 +1895,7 @@ local function createOriginialElements()
 		colorText_2.Text = "Green:"
 		green.ClipsDescendants = true
 		colorText_2.TextColor3 = Color3.fromRGB(255, 255, 255)
-		colorText_2.TextSize = 14.000
+		colorText_2.TextSize = M.TextSize
 		colorText_2.TextXAlignment = Enum.TextXAlignment.Right
 
 		boxBackground_3.Name = "BoxBackground"
@@ -1774,7 +1938,7 @@ local function createOriginialElements()
 		colorValue_2.PlaceholderColor3 = Color3.fromRGB(139, 141, 147)
 		colorValue_2.Text = "255"
 		colorValue_2.TextColor3 = Color3.fromRGB(139, 141, 147)
-		colorValue_2.TextSize = 14.000
+		colorValue_2.TextSize = M.TextSize
 
 		blue.Name = "Blue"
 		blue.Parent = colorInputHolder
@@ -1793,7 +1957,7 @@ local function createOriginialElements()
 		colorText_3.Font = Enum.Font.Gotham
 		colorText_3.Text = "Blue:"
 		colorText_3.TextColor3 = Color3.fromRGB(255, 255, 255)
-		colorText_3.TextSize = 14.000
+		colorText_3.TextSize = M.TextSize
 		colorText_3.TextXAlignment = Enum.TextXAlignment.Right
 
 		boxBackground_4.Name = "BoxBackground"
@@ -1836,7 +2000,7 @@ local function createOriginialElements()
 		colorValue_3.PlaceholderColor3 = Color3.fromRGB(139, 141, 147)
 		colorValue_3.Text = "255"
 		colorValue_3.TextColor3 = Color3.fromRGB(139, 141, 147)
-		colorValue_3.TextSize = 14.000
+		colorValue_3.TextSize = M.TextSize
 
 		colorSample.Name = "ColorSample"
 		colorSample.Parent = valueHolder
@@ -1941,7 +2105,6 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	local minimizedShortBarOriginialSize
     window.IsHidden = false
     window.TabInfo = {}
-    window.CurrentKeybind = Enum.KeyCode.RightShift
 
 	local background = windowInstance.Background
 	local heading = background.Heading
@@ -1972,6 +2135,8 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	end
 
 	local function onHeadingMouseDown()
+		-- Mobile: disable drag entirely so scrolling doesn't move window
+		if isMobile then return end
 		local mouseMovedConnection = mouse.Move:Connect(updateWindowPos)
 		local inputEndedConnection
 
@@ -2052,7 +2217,8 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 		constrainToScreen = true
 	end
 
-	visibilityKeybind = getMatchingKeyCodeFromName(visibilityKeybind) or Enum.KeyCode.RightControl
+	-- Parse & store the starting keybind on the window object itself
+	window.CurrentKeybind = getMatchingKeyCodeFromName(visibilityKeybind) or Enum.KeyCode.RightShift
 
 	window.Type = "Window"
 	window.Instance = windowInstance
@@ -2067,32 +2233,38 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	buttonHolder.Plus.MouseButton1Click:Connect(maximizeWindow)
 	buttonHolder.Minus.MouseButton1Click:Connect(minimizeWindow)
 
+	-- Visibility toggle — always reads window.CurrentKeybind so SetKeybind changes take effect
 	UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 		if gameProcessedEvent then return end
 		if input.UserInputType == Enum.UserInputType.Keyboard then
-			if input.KeyCode == visibilityKeybind then
+			if input.KeyCode == window.CurrentKeybind then
 				background.Visible = not background.Visible
 			end
 		end
 	end)
 
-	holder.Tabs.TabsUIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		holder.Tabs.CanvasSize = UDim2.fromOffset(0,holder.Tabs.TabsUIListLayout.AbsoluteContentSize.Y + holder.Tabs.TabsUIListLayout.Padding.Offset)
-	end)
+	AutoCanvasSize(holder.Tabs, holder.Tabs.TabsUIListLayout)
 
-	heading.Title.Text = windowName or "Cerberus"
-	windowInstance.Parent = game:GetService("CoreGui") -- Change to core later on and add detection bypass
-	background.Size = UDim2.fromOffset(background.AbsoluteSize.X, background.AbsoluteSize.Y)
-	
-	if width then
-		background.Size = UDim2.fromOffset(width, background.AbsoluteSize.Y)
-	end
-
-	if height then
-		background.Size = UDim2.fromOffset(background.AbsoluteSize.X, height)
+	heading.Title.Text = windowName or "BSMT"
+	windowInstance.Parent = game:GetService("CoreGui")
+	-- Responsive window sizing
+	if isMobile then
+		background.Size = UDim2.new(0.95, 0, 0.88, 0)
+		background.Position = UDim2.new(0.5, 0, 0.5, 0)
+	else
+		background.Size = UDim2.fromOffset(background.AbsoluteSize.X, background.AbsoluteSize.Y)
+		if width then
+			background.Size = UDim2.fromOffset(width, background.AbsoluteSize.Y)
+		end
+		if height then
+			background.Size = UDim2.fromOffset(background.AbsoluteSize.X, height)
+		end
 	end
 
 	holder.PageLogo.Image = backgroundImageId or "rbxassetid://11435586663"
+	-- Store for use when creating tab pages
+	window._backgroundImageId = backgroundImageId or ""
+	window._backgroundImageRef = holder.PageLogo  -- reuse same image label
 	background.Position = UDim2.new(0, background.AbsolutePosition.X + background.AbsoluteSize.X / 2, 0, background.AbsolutePosition.Y + background.AbsoluteSize.Y / 2 + 36)
 	background.BackgroundUIAspectRatioConstraint:Destroy()
 	holder.Size = UDim2.new(0,holder.AbsoluteSize.X,0,holder.AbsoluteSize.Y)
@@ -2103,7 +2275,17 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	minimizedLongBarOriginialSize = Vector2.new(heading.AbsoluteSize.X, heading.AbsoluteSize.Y)
 	minimizedShortBarOriginialSize = Vector2.new(heading.AbsoluteSize.X / 6 * 2, heading.AbsoluteSize.Y)
 	originialWindowSize = background.AbsoluteSize
-	
+
+	-- Touch devices have no keyboard, so the show/hide keybind is unreachable.
+	-- Always give mobile users a draggable on-screen toggle button.
+	if isMobile then
+		task.defer(function()
+			if window and not window.MobileButton then
+				window:CreateMobileButton(backgroundImageId, true)
+			end
+		end)
+	end
+
 	return window
 end
 
@@ -2120,8 +2302,8 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 	local tabCloseTween = TweenService:Create(tabInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {BackgroundTransparency = 1})
 	local tabSeperatorOpenTween = TweenService:Create(tabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(.035,1)})
 	local tabSeperatorCloseTween = TweenService:Create(tabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,1)})
-	local pageOpenTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0.774999976, -25, 1, -15)})	
-	local pageCloseTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(.775,-25,0,0)})
+	local pageOpenTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W, -25, 1, -15)})	
+	local pageCloseTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W,-25,0,0)})
 	local logoShowTween = TweenService:Create(self.Instance.Background.Holder.PageLogo, TweenInfo.new(.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = .65})
 	local logoHideTween = TweenService:Create(self.Instance.Background.Holder.PageLogo, TweenInfo.new(.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {ImageTransparency = 1})
 	
@@ -2161,7 +2343,7 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 			for foundTabInstance, tabInfo in pairs(self.TabInfo) do
 				if foundTabInstance ~= tabInstance then
 					if tabInfo.isOpen then
-						local foundPageCloseTween = TweenService:Create(tabInfo.Page, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(.775,-25,0,0)})
+						local foundPageCloseTween = TweenService:Create(tabInfo.Page, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W,-25,0,0)})
 						local foundTabCloseTween = TweenService:Create(foundTabInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {BackgroundTransparency = 1})
 						local foundTabSeperatorCloseTween = TweenService:Create(foundTabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,1)})
 
@@ -2240,12 +2422,31 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 	tabInstance.TabText.Position = UDim2.new(0.035, 8 + tabInstance.TabImage.AbsoluteSize.X, 0, 0)
 	tabInstance.TabText.Size = UDim2.new(0.965, -(8 + tabInstance.TabImage.AbsoluteSize.X + 8), 1, 0)
 	pageInstance.Parent = self.Instance.Background.Holder
-	
+
+	-- Background watermark image inside the page itself
+	do
+		local imgId = self._backgroundImageId or ""
+		if imgId ~= "" then
+			local pageBg = Instance.new("ImageLabel")
+			pageBg.Name = "PageBackground"
+			pageBg.AnchorPoint = Vector2.new(0.5, 0.5)
+			pageBg.Position = UDim2.new(0.5, 0, 0.5, 0)
+			pageBg.Size = UDim2.new(1, 0, 1, 0)
+			pageBg.BackgroundTransparency = 1
+			pageBg.BorderSizePixel = 0
+			pageBg.Image = imgId
+			pageBg.ImageTransparency = 0.82
+			pageBg.ScaleType = Enum.ScaleType.Fit
+			pageBg.ZIndex = 0
+			pageBg.Parent = pageInstance
+		end
+	end
+
 	if isTabFirstTab() then
 		tabInstance.TabSeperator.Size = UDim2.fromScale(.035,1)
 		tabInstance.BackgroundTransparency = .25
 		pageInstance.Visible = true
-		pageInstance.Size = UDim2.new(0.774999976, -25, 1, -15)
+		pageInstance.Size = UDim2.new(PAGE_W, -25, 1, -15)
 		self.TabInfo[tabInstance].isOpen = true
 	end
 	
@@ -2256,10 +2457,15 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 	end)
 	
 	for _, scrollingFrame in ipairs(pageInstance:GetChildren()) do
-		local list = scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
-		list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-			scrollingFrame.CanvasSize = UDim2.fromOffset(0,list.AbsoluteContentSize.Y + list.Padding.Offset)
-		end)
+		if scrollingFrame:IsA("ScrollingFrame") then
+			local list = scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
+			if list then
+				scrollingFrame.ScrollingEnabled = true
+				scrollingFrame.ClipsDescendants = true
+				scrollingFrame.Active = true
+				AutoCanvasSize(scrollingFrame, list)
+			end
+		end
 	end
 	
 	return tab
@@ -2284,11 +2490,18 @@ function tabHandler:Section(sectionTitle: string) -- Add option to make on left 
 	end
 	
 	local function getShorterScrollingFrame()
+		-- Mobile uses a single full-width column, so every section goes there.
+		if isMobile then
+			return self.ElementToParentChildren:FindFirstChild("LeftScrollingFrame")
+		end
+
 		local pageScrollingFrame
 		local pageScrollingFrameContentSizeY = math.huge
 		
 		for _, scrollingFrame in ipairs(self.ElementToParentChildren:GetChildren()) do
+			if not scrollingFrame:IsA("ScrollingFrame") then continue end
 			local list = scrollingFrame:FindFirstChildWhichIsA("UIListLayout")
+			if not list then continue end
 			if pageScrollingFrameContentSizeY > list.AbsoluteContentSize.Y then
 				pageScrollingFrame = scrollingFrame
 				pageScrollingFrameContentSizeY = list.AbsoluteContentSize.Y
@@ -2340,7 +2553,7 @@ function elementHandler:Title(titleName: string)
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = titleName or "N/A"
 	textParams.Font = titleInstance.TitleText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 
 	local requiredTextSpace = TextService:GetTextBoundsAsync(textParams) + textSpaceOffset
@@ -2367,7 +2580,7 @@ function titleHandler:ChangeText(newText: string): nil
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = newText or "N/A"
 	textParams.Font = self.Instance.TitleText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredTextSpace = TextService:GetTextBoundsAsync(textParams) + textSpaceOffset
@@ -2440,84 +2653,7 @@ function labelHandler:ChangeText(newText: string, playAnimation: boolean): nil
 	end
 end
 
-function elementHandler:Toggle(toggleName: string, callback): table
-	local toggle = setmetatable({}, toggleHandler)
-	local toggleInstance = originalElements.Toggle:Clone()
-	local textOffset = 4
-	
-	local tweenTime = .275
-	local cornerOnTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)})
-	local cornerOffTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)})
-	local imageRotationOnTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360})
-	local imageRotationOffTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0})
-	local imageSizeOnTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)});
-	local imageSizeOffTween = TweenService:Create(toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)});
-	
-	toggle.Type = "Toggle"
-	toggle.IdentifierText = toggleName or "N/A"
-	toggle.Instance = toggleInstance
-	toggle.GuiToRemove = toggleInstance
-	toggle.Enabled = false
-	
-	if self.Type == "SearchBar" then
-		self.ChildedElementsInfo[toggleInstance] = toggle
-	end
-	
-	callback = callback or function() end
-	
-	local function onToggleClick()
-		if toggle.Enabled then
-			cornerOffTween:Play()
-			imageRotationOffTween:Play()
-			imageSizeOffTween:Play()
-		else
-			cornerOnTween:Play()
-			imageRotationOnTween:Play()
-			imageSizeOnTween:Play()
-		end
-		
-		toggle.Enabled = not toggle.Enabled
-		
-		callback(toggle.Enabled)
-	end
-	
-	toggleInstance.MouseButton1Click:Connect(onToggleClick)
-	
-	toggleInstance.ToggleText.Text = toggleName or "N/A"
-	
-	toggleInstance.Parent = self.ElementToParentChildren
-	toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
-	toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
-	
-	return toggle
-end
- -- SET IDENTIFIER IN SELF AND ADD TOGGLES TO EACH IDENTIFIER RADIO GROUP
-function toggleHandler:Set(bool: boolean, callback): nil -- Add Callback to self?
-	local tweenTime = .275
-	local cornerOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CornerRadius = UDim.new(0, 0)})
-	local cornerOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5, 0)})
-	local imageRotationOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 360})
-	local imageRotationOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Rotation = 0})
-	local imageSizeOnTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(1,1)});
-	local imageSizeOffTween = TweenService:Create(self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,0)});
-	
-	if typeof(bool) ~= "boolean" then error("First argument must be a boolean.") end
-	
-	callback = callback or function() end
-	self.Enabled = bool
-
-	if self.Enabled then
-		cornerOnTween:Play()
-		imageRotationOnTween:Play()
-		imageSizeOnTween:Play()
-	else
-		cornerOffTween:Play()
-		imageRotationOffTween:Play()
-		imageSizeOffTween:Play()
-	end
-
-	callback(bool)
-end
+-- Toggle and Set handlers defined below with full config support
 
 function elementHandler:Button(buttonName: string, callback): table -- Add Callback to self?
 	local button = setmetatable({}, buttonHandler)
@@ -2559,6 +2695,8 @@ function elementHandler:Button(buttonName: string, callback): table -- Add Callb
 	buttonInstance.Parent = self.ElementToParentChildren
 	buttonInstance.ButtonText.Size = UDim2.new(1,-(buttonInstance.CircleBackground.AbsoluteSize.X + textOffset),1,0)
 	buttonInstance.ButtonText.Position = UDim2.fromOffset(buttonInstance.CircleBackground.AbsoluteSize.X + textOffset,0)
+
+	return button
 end
 
 function elementHandler:Dropdown(dropdownName: string): table
@@ -2649,7 +2787,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = tostring(maximumValue) or "N/A"
 	textParams.Font = sliderInstance.TextGrouping.NumberText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredNumberTextSpace = TextService:GetTextBoundsAsync(textParams)
@@ -2682,6 +2820,8 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 			end
 			
 			sliderInstance.TextGrouping.NumberText.Text = math.round(sliderValue)
+			slider._currentValue = sliderValue
+			_G.BSMTConfigData[slider.ConfigIdentifier] = sliderValue
 			callback(sliderValue)
 		end
 		
@@ -2689,7 +2829,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 		sliderConnection = mouse.Move:Connect(onMouseMoved)
 		
 		endInputConnection = UserInputService.InputEnded:Connect(function(input, gameProcessedEvent)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				sliderConnection:Disconnect()
 				endInputConnection:Disconnect()
 			end
@@ -2723,20 +2863,53 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 	slider.IdentifierText = sliderName or "N/A"
 	slider.Instance = sliderInstance
 	slider.GuiToRemove = sliderInstance
+	slider._minValue = minimumValue
+	slider._maxValue = maximumValue
+	slider._currentValue = minimumValue
 	
 	if self.Type == "SearchBar" then
 		self.ChildedElementsInfo[sliderInstance] = slider
 	end
-	
+
+	-- Config registration: 4th arg can be a config key
+	local sliderConfigKey = sliderName or "N/A"
+	slider.ConfigIdentifier = sliderConfigKey
+	_G.BSMTConfigElements[sliderConfigKey] = slider
+
+	if _G.BSMTConfigData[sliderConfigKey] ~= nil then
+		slider._currentValue = _G.BSMTConfigData[sliderConfigKey]
+	end
+
+	-- Internal helper used by LoadConfig
+	function slider:SetValue(v)
+		v = math.clamp(tonumber(v) or self._minValue, self._minValue, self._maxValue)
+		self._currentValue = v
+		local pct = (v - self._minValue) / (self._maxValue - self._minValue)
+		sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
+		sliderInstance.TextGrouping.NumberText.Text = math.round(v)
+		_G.BSMTConfigData[self.ConfigIdentifier] = v
+		callback(v)
+	end
+
 	sliderInstance.SliderBackground.MouseButton1Down:Connect(onMouseDown)
 	sliderInstance.TextGrouping.NumberText.FocusLost:Connect(onFocusLost)
 	
 	sliderInstance.TextGrouping.SliderText.Text = sliderName or "N/A"
-	sliderInstance.TextGrouping.NumberText.Text = minimumValue
+	sliderInstance.TextGrouping.NumberText.Text = math.round(slider._currentValue)
 	sliderInstance.TextGrouping.NumberText.Size = UDim2.new(0,math.max(requiredErrorTextSpace.X, requiredNumberTextSpace.X) + textPixelOffset,1,0)
+
+	-- Restore bar position from saved config value
+	task.defer(function()
+		if slider._currentValue ~= minimumValue then
+			local pct = (slider._currentValue - minimumValue) / maxMinRange
+			sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
+		end
+	end)
 	
 	sliderInstance.Parent = self.ElementToParentChildren
 	sliderInstance.TextGrouping.SliderText.Size = UDim2.new(0, sliderInstance.TextGrouping.AbsoluteSize.X - textPixelOffset - requiredNumberTextSpace.X, 1, 0)
+
+	return slider
 end
 
 function elementHandler:SearchBar(placeholderText: string): table
@@ -2893,15 +3066,15 @@ function elementHandler:SearchBar(placeholderText: string): table
 	return searchBar
 end
 
---REWORK KEYBIND COMPLETLEY INEFFICENT !!!
--- ADD RIGHT CLICK TO REMOVE CURRENT KEYBIND TO NOTHING
+-- Keybind element - fully rewritten to avoid race conditions and thread-blocking
 function elementHandler:Keybind(keybindName: string, callback, defaultKey: string): table
 	local keybind = setmetatable({}, keybindHandler)
 	local keybindInstance = originalElements.Keybind:Clone()
 	local sideClosedTextPaddingPixels = 1
 	local keybindTextPadding = 4
-	local isOverriding = false
-	local inputBeingProcessed
+	local isListening = false   -- true while waiting for key press
+	local currentKeyCode = nil  -- the active KeyCode enum item
+	local listenConnection = nil
 	local originialOffsetSize
 	local textAnimationSpeed = .025
 	local textAnimation
@@ -2911,10 +3084,10 @@ function elementHandler:Keybind(keybindName: string, callback, defaultKey: strin
 	textParams.Text = pressKeyMsg
 	textParams.Width = 10000
 	textParams.Font = keybindInstance.BoxBackground.InnerBox.KeyText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	
 	local requiredInputKeyTextSize = TextService:GetTextBoundsAsync(textParams)
-	local requiredInputKeyTextTween = TweenService:Create(keybindInstance.BoxBackground, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0,requiredInputKeyTextSize.X + keybindInstance.BoxBackground.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.BoxPadding.PaddingRight.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingRight.Offset,1,0)})
+	local requiredInputKeyTextTween = TweenService:Create(keybindInstance.BoxBackground, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0, requiredInputKeyTextSize.X + keybindInstance.BoxBackground.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.BoxPadding.PaddingRight.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingRight.Offset, 1, 0)})
 	
 	callback = callback or function() end
 	keybindName = keybindName or "N/A"
@@ -2922,72 +3095,59 @@ function elementHandler:Keybind(keybindName: string, callback, defaultKey: strin
 	
 	local function getMatchingKeyCodeFromName(name: string)
 		if not name then return end
-		for i, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
+		for _, keycode in pairs(Enum.KeyCode:GetEnumItems()) do
 			if keycode.Name:lower() == name:lower() then
 				return keycode
 			end
 		end
 	end
 	
-	local function onKeybindClick()
-		local recognizedKey = false
-		local input
-		
-		requiredInputKeyTextTween:Play()
-		
-		repeat
-			local gameProcessedEvent
-			input, gameProcessedEvent = UserInputService.InputBegan:Wait()
-			if input.KeyCode.Name ~= "Unknown" then
-				recognizedKey = true
-			end
-		until recognizedKey
-		
-		isOverriding = true
-		if textAnimation then
-			coroutine.close(textAnimation)	
-		end
-		
+	local function setKeyDisplay(keyName)
+		-- Update the key label text and resize the box
+		if textAnimation then coroutine.close(textAnimation) end
 		textAnimation = coroutine.create(function()
-			animateText(keybindInstance.BoxBackground.InnerBox.KeyText, textAnimationSpeed, input.KeyCode.Name)
-			
-			textParams.Text = input.KeyCode.Name
+			animateText(keybindInstance.BoxBackground.InnerBox.KeyText, textAnimationSpeed, keyName)
+			textParams.Text = keyName
 			local requiredNewTextSpace = TextService:GetTextBoundsAsync(textParams)
-			local closeTween = TweenService:Create(keybindInstance.BoxBackground, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0,math.max(originialOffsetSize.X, requiredNewTextSpace.X + keybindInstance.BoxBackground.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.BoxPadding.PaddingRight.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingRight.Offset + sideClosedTextPaddingPixels),1,0)})
-			closeTween:Play()
-			isOverriding = false
+			local padTotal = keybindInstance.BoxBackground.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.BoxPadding.PaddingRight.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingLeft.Offset + keybindInstance.BoxBackground.InnerBox.BoxPadding.PaddingRight.Offset + sideClosedTextPaddingPixels
+			local newWidth = math.max(originialOffsetSize.X, requiredNewTextSpace.X + padTotal)
+			TweenService:Create(keybindInstance.BoxBackground, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0, newWidth, 1, 0)}):Play()
 		end)
-		
 		coroutine.resume(textAnimation)
-
-		repeat task.wait() until not inputBeingProcessed
-		defaultKey = input.KeyCode
+	end
+	
+	local function onKeybindClick()
+		if isListening then return end  -- already waiting
+		isListening = true
+		
+		-- Grow box to show "Press a key..." message
+		requiredInputKeyTextTween:Play()
+		keybindInstance.BoxBackground.InnerBox.KeyText.Text = pressKeyMsg
+		
+		-- Single connection, disconnects itself after one valid key
+		if listenConnection then listenConnection:Disconnect() end
+		listenConnection = UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			if input.KeyCode.Name == "Unknown" then return end
+			
+			isListening = false
+			listenConnection:Disconnect()
+			listenConnection = nil
+			
+			currentKeyCode = input.KeyCode
+			setKeyDisplay(input.KeyCode.Name)
+		end)
 	end
 	
 	local function onInputBegan(input, gameProcessedEvent)
-		inputBeingProcessed = true
 		if gameProcessedEvent then return end
+		if isListening then return end  -- don't fire callback while picking a key
 		if input.UserInputType == Enum.UserInputType.Keyboard then
-			if input.KeyCode == defaultKey then
+			if currentKeyCode and input.KeyCode == currentKeyCode then
 				callback()
 			end
 		end
-		inputBeingProcessed = false	
 	end
-	-- for toggle radio buttons do a fn to loop all and toggles in table given and setttoggle fn to false  by checking if self.IsToggled
-	requiredInputKeyTextTween.Completed:Connect(function(playbackState)
-		if playbackState == Enum.PlaybackState.Completed and not isOverriding then -- Animation runs after other override starts due to tween completed after override starts
-			if textAnimation then
-				coroutine.close(textAnimation)
-			end
-			
-			textAnimation = coroutine.create(function()
-				animateText(keybindInstance.BoxBackground.InnerBox.KeyText, textAnimationSpeed, pressKeyMsg)
-			end)
-			
-			coroutine.resume(textAnimation)
-		end
-	end)
 	
 	keybind.Type = "Keybind"
 	keybind.IdentifierText = keybindName
@@ -3000,13 +3160,15 @@ function elementHandler:Keybind(keybindName: string, callback, defaultKey: strin
 	keybindInstance.KeybindText.Text = keybindName
 	keybindInstance.BoxBackground.InnerBox.KeyText.Text = defaultKey
 	
-	defaultKey = getMatchingKeyCodeFromName(defaultKey)
+	currentKeyCode = getMatchingKeyCodeFromName(defaultKey)
 	
 	keybindInstance.Parent = self.ElementToParentChildren
 	originialOffsetSize = keybindInstance.BoxBackground.AbsoluteSize
-	keybindInstance.BoxBackground.Size = UDim2.fromOffset(originialOffsetSize.X,originialOffsetSize.Y)
+	keybindInstance.BoxBackground.Size = UDim2.fromOffset(originialOffsetSize.X, originialOffsetSize.Y)
 	keybindInstance.BoxBackground.BoxAspect:Destroy()
-	keybindInstance.KeybindText.Size = UDim2.new(1,-(originialOffsetSize.X + keybindTextPadding),1,0)
+	keybindInstance.KeybindText.Size = UDim2.new(1, -(originialOffsetSize.X + keybindTextPadding), 1, 0)
+	
+	return keybind
 end
 
 function elementHandler:TextBox(textBoxName:string, callback): table
@@ -3024,7 +3186,7 @@ function elementHandler:TextBox(textBoxName:string, callback): table
 	textParams.Text = placeholderText
 	textParams.Width = 10000
 	textParams.Font = textBoxText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	
 	local requiredPlaceholderTextSpace = TextService:GetTextBoundsAsync(textParams)
 	
@@ -3107,7 +3269,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = "255"
 	textParams.Font = heading.ColorWheelName.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredRgbTextSize = TextService:GetTextBoundsAsync(textParams)
@@ -3180,7 +3342,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 		end)
 
 		inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				inputEndedConnection:Disconnect()
 				mouseMovedConnection:Disconnect()
 			end
@@ -3197,7 +3359,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 		end)
 
 		inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				inputEndedConnection:Disconnect()
 				mouseMovedConnection:Disconnect()
 			end
@@ -3278,6 +3440,10 @@ notificationHandler.__index = notificationHandler
 local notificationContainer
 local activeNotifications = {}
 local notificationYOffset = 10
+-- Wider, taller toasts on mobile so they're legible; classic 300px on desktop.
+local notifWidth  = isMobile and math.floor(math.clamp(viewPortSize.X * 0.42, 300, 460)) or 300
+local notifHeight = isMobile and 74 or 60
+local notifMargin = 10
 
 local function createNotificationContainer()
 	if notificationContainer then return notificationContainer end
@@ -3286,6 +3452,7 @@ local function createNotificationContainer()
 	container.Name = "BSMTNotifications"
 	container.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	container.IgnoreGuiInset = true
+	container.DisplayOrder = 50  -- sit above the main window
 	container.Parent = game:GetService("CoreGui")
 	
 	return container
@@ -3308,8 +3475,8 @@ local function createNotification()
 
 	notification.Name = "Notification"
 	notification.BackgroundTransparency = 1
-	notification.Size = UDim2.new(0, 300, 0, 60)
-	notification.Position = UDim2.new(1, 320, 1, -70)
+	notification.Size = UDim2.new(0, notifWidth, 0, notifHeight)
+	notification.Position = UDim2.new(1, notifWidth + 20, 0, 10)  -- starts off-screen right, enters from top-right
 
 	background.Name = "Background"
 	background.Parent = notification
@@ -3345,19 +3512,19 @@ local function createNotification()
 	icon.Parent = contentHolder
 	icon.AnchorPoint = Vector2.new(0, 0.5)
 	icon.BackgroundTransparency = 1
-	icon.Position = UDim2.new(0, 10, 0.5, 0)
-	icon.Size = UDim2.new(0, 24, 0, 24)
+	icon.Position = UDim2.new(0, 12, 0.5, 0)
+	icon.Size = UDim2.new(0, isMobile and 30 or 24, 0, isMobile and 30 or 24)
 	icon.Image = "rbxassetid://11454041890"
 
 	textLabel.Name = "TextLabel"
 	textLabel.Parent = contentHolder
 	textLabel.BackgroundTransparency = 1
-	textLabel.Position = UDim2.new(0, 44, 0, 0)
-	textLabel.Size = UDim2.new(1, -54, 1, 0)
+	textLabel.Position = UDim2.new(0, isMobile and 54 or 44, 0, 0)
+	textLabel.Size = UDim2.new(1, isMobile and -64 or -54, 1, 0)
 	textLabel.Font = Enum.Font.Gotham
 	textLabel.Text = "Notification"
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	textLabel.TextSize = 14
+	textLabel.TextSize = isMobile and 18 or 14
 	textLabel.TextWrapped = true
 	textLabel.TextXAlignment = Enum.TextXAlignment.Left
 	textLabel.TextYAlignment = Enum.TextYAlignment.Center
@@ -3365,8 +3532,9 @@ local function createNotification()
 	textPadding.Parent = textLabel
 	textPadding.PaddingRight = UDim.new(0, 10)
 
-	uiCorner.CornerRadius = UDim.new(0, 4)
+	uiCorner.CornerRadius = UDim.new(0, isMobile and 8 or 6)
 	uiCorner.Parent = background
+	Stroke(background, Theme.Stroke, 1, 0.2)
 
 	progressBar.Name = "ProgressBar"
 	progressBar.Parent = contentHolder
@@ -3389,19 +3557,19 @@ local function createNotification()
 end
 
 local function updateNotificationPositions()
-	local currentY = -10
+	-- Stack notifications downward from top-right corner
+	local currentY = 10
 	
-	for i = #activeNotifications, 1, -1 do
+	for i = 1, #activeNotifications do
 		local notif = activeNotifications[i]
 		if notif and notif.Instance.Parent then
-			local targetY = currentY - notif.Instance.AbsoluteSize.Y
 			local moveTween = TweenService:Create(
 				notif.Instance,
 				TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-				{Position = UDim2.new(1, -310, 1, targetY)}
+				{Position = UDim2.new(1, -(notifWidth + notifMargin), 0, currentY)}
 			)
 			moveTween:Play()
-			currentY = targetY - 10
+			currentY = currentY + notif.Instance.AbsoluteSize.Y + 10
 		end
 	end
 end
@@ -3460,7 +3628,7 @@ function Library.Notification(message, notifType, duration)
 	local slideInTween = TweenService:Create(
 		notificationInstance,
 		TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{Position = UDim2.new(1, -310, 1, -70)}
+		{Position = UDim2.new(1, -(notifWidth + notifMargin), 0, 10)}
 	)
 	slideInTween:Play()
 	
@@ -3487,7 +3655,7 @@ function notificationHandler:Dismiss()
 	local slideOutTween = TweenService:Create(
 		self.Instance,
 		TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-		{Position = UDim2.new(1, 320, self.Instance.Position.Y.Scale, self.Instance.Position.Y.Offset)}
+		{Position = UDim2.new(1, notifWidth + 20, 0, self.Instance.Position.Y.Offset)}
 	)
 	
 	slideOutTween:Play()
@@ -3505,8 +3673,8 @@ function notificationHandler:Dismiss()
 	end)
 end
 
-_G.CerberusConfigData = _G.CerberusConfigData or {}
-_G.CerberusConfigElements = _G.CerberusConfigElements or {}
+_G.BSMTConfigData = _G.BSMTConfigData or {}
+_G.BSMTConfigElements = _G.BSMTConfigElements or {}
 
 local currentGameId = tostring(game.PlaceId)
 local configFolder = "BSMT_Configs"
@@ -3532,7 +3700,7 @@ function Library.SaveConfig(configName)
     local configPath = gameConfigFolder .. "/" .. configName .. ".cfg"
     
     local success, err = pcall(function()
-        writefile(configPath, game:GetService("HttpService"):JSONEncode(_G.CerberusConfigData))
+        writefile(configPath, game:GetService("HttpService"):JSONEncode(_G.BSMTConfigData))
     end)
     
     if success then
@@ -3572,12 +3740,22 @@ function Library.LoadConfig(configName)
     
     if success and result then
         for identifier, value in pairs(result) do
-            _G.CerberusConfigData[identifier] = value
+            _G.BSMTConfigData[identifier] = value
         end
         
-        for identifier, element in pairs(_G.CerberusConfigElements) do
-            if result[identifier] ~= nil and element.Type == "Toggle" then
-                element:Apply(result[identifier], true)
+        for identifier, element in pairs(_G.BSMTConfigElements) do
+            if result[identifier] ~= nil then
+                if element.Type == "Toggle" then
+                    element:Apply(result[identifier], true)
+                elseif element.Type == "Slider" then
+                    element:SetValue(result[identifier])
+                elseif element.Type == "ToggleKeybind" then
+                    -- Re-bind from saved key name
+                    element.toggle:BindKeyCode(result[identifier])
+                    if element.instance then
+                        element.instance.Text = result[identifier]
+                    end
+                end
             end
         end
         
@@ -3693,7 +3871,7 @@ function toggleHandler:Apply(value, runCallback)
     end
     
     if self.ConfigIdentifier then
-        _G.CerberusConfigData[self.ConfigIdentifier] = self.Enabled
+        _G.BSMTConfigData[self.ConfigIdentifier] = self.Enabled
     end
 end
 
@@ -3710,10 +3888,10 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggle.Enabled = false
     toggle.Callback = callback or function() end
     
-    _G.CerberusConfigElements[toggle.ConfigIdentifier] = toggle
+    _G.BSMTConfigElements[toggle.ConfigIdentifier] = toggle
     
-    if _G.CerberusConfigData[toggle.ConfigIdentifier] ~= nil then
-        toggle.Enabled = _G.CerberusConfigData[toggle.ConfigIdentifier]
+    if _G.BSMTConfigData[toggle.ConfigIdentifier] ~= nil then
+        toggle.Enabled = _G.BSMTConfigData[toggle.ConfigIdentifier]
     end
     
     if self.Type == "SearchBar" then
@@ -3727,7 +3905,7 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggleInstance.ToggleText.Text = toggleName or "N/A"
     toggleInstance.Parent = self.ElementToParentChildren
     toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
-    toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
+    toggleInstance.ToggleText.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
     
     if toggle.Enabled then
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
@@ -3746,6 +3924,181 @@ function toggleHandler:Set(bool, callback)
     end
 end
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- toggleHandler:BindKeyCode(keyCode)   [internal]
+--   Attaches a low-level UIS listener. When the key is pressed it calls
+--   self:Apply(not self.Enabled, true) which updates visuals AND fires Callback.
+-- ─────────────────────────────────────────────────────────────────────────────
+function toggleHandler:BindKeyCode(keyCode)
+    -- Disconnect any existing listener first
+    if self._keyConnection then
+        self._keyConnection:Disconnect()
+        self._keyConnection = nil
+    end
+    self._boundKeyCode = keyCode or nil
+    if not keyCode then return end
+
+    -- Capture self.Callback at bind time so it can never be nil inside the closure
+    local cb = self.Callback
+
+    self._keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if input.KeyCode ~= self._boundKeyCode then return end
+        -- Flip state: updates visuals + fires the user callback
+        self.Enabled = not self.Enabled
+
+        local tweenTime = .275
+        local toggleImage = self.Instance.BoxBackground.InnerBox.CenterBox.ToggleImage
+        local toggleImageCorner = toggleImage.ToggleImageCorner
+        if self.Enabled then
+            TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),  {CornerRadius = UDim.new(0,0)}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Rotation = 360}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Size = UDim2.fromScale(1,1)}):Play()
+        else
+            TweenService:Create(toggleImageCorner, TweenInfo.new(tweenTime, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {CornerRadius = UDim.new(.5,0)}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Rotation = 0}):Play()
+            TweenService:Create(toggleImage,       TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),                                {Size = UDim2.fromScale(0,0)}):Play()
+        end
+
+        -- Save to config
+        if self.ConfigIdentifier then
+            _G.BSMTConfigData[self.ConfigIdentifier] = self.Enabled
+        end
+
+        -- Fire the user's callback with the new state
+        if cb then cb(self.Enabled) end
+    end)
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- toggleHandler:BindKey(arg, defaultKeyName?)
+--
+--   MODE 1 – no arg / nil
+--     Adds a clickable keybind UI row with no default key set.
+--     myToggle:BindKey()
+--
+--   MODE 2 – arg is a KeyCode name  (e.g. "RightShift", "X", "F")
+--     Silently binds that key with NO UI row.
+--     myToggle:BindKey("RightShift")
+--
+--   MODE 3 – arg is a plain label string (e.g. "Set a Keybind")
+--     Adds a clickable keybind UI row with that label.
+--     Optional 2nd arg sets a default key shown in the box on first load.
+--     myToggle:BindKey("Set a Keybind")
+--     myToggle:BindKey("Set a Keybind", "RightShift")
+--
+--   Right-click any keybind row to clear it.
+--   Keybinds are stored in _G.BSMTConfigData and saved when you call SaveConfig.
+-- ─────────────────────────────────────────────────────────────────────────────
+function toggleHandler:BindKey(arg, defaultKeyName)
+    -- Clear any previous binding
+    self:BindKeyCode(nil)
+
+    local function getKeyCode(name)
+        if not name then return nil end
+        for _, kc in pairs(Enum.KeyCode:GetEnumItems()) do
+            if kc.Name:lower() == name:lower() then return kc end
+        end
+        return nil
+    end
+
+    -- ── MODE 2: arg is a known key name → bind silently, no UI ───────────────
+    if arg ~= nil then
+        local directCode = getKeyCode(arg)
+        if directCode then
+            self:BindKeyCode(directCode)
+            return
+        end
+    end
+
+    -- ── MODES 1 & 3: create a keybind UI row ─────────────────────────────────
+    local label      = (arg ~= nil and tostring(arg) ~= "") and tostring(arg) or "Keybind"
+    local configKey  = (self.ConfigIdentifier or self.IdentifierText or "toggle") .. "_keybind"
+    local parent     = self.Instance and self.Instance.Parent
+
+    if not parent then
+        warn("BSMT BindKey: call BindKey AFTER adding the toggle to a section.")
+        return
+    end
+
+    -- Build the UI row (same template as the standalone Keybind element)
+    local keybindRow     = originalElements.Keybind:Clone()
+    local keyText        = keybindRow.BoxBackground.InnerBox.KeyText
+    local boxBackground  = keybindRow.BoxBackground
+    local keybindTextLbl = keybindRow.KeybindText
+
+    keybindTextLbl.Text = label
+    keybindTextLbl.Size = UDim2.new(0, 0, 1, 0)  -- hide before parenting so no text bleeds through
+    keyText.Text        = "None"
+
+    keybindRow.Parent = parent
+    local boxSize = boxBackground.AbsoluteSize
+    boxBackground.BoxAspect:Destroy()
+    boxBackground.Size  = UDim2.fromOffset(boxSize.X, boxSize.Y)
+    keybindTextLbl.Size = UDim2.new(1, -(boxSize.X + 4), 1, 0)  -- restore correct size
+
+    -- Restore from saved config (takes priority over defaultKeyName)
+    local savedKeyName = _G.BSMTConfigData[configKey]
+    local startKey     = (savedKeyName and savedKeyName ~= "") and savedKeyName or defaultKeyName
+
+    if startKey then
+        local startCode = getKeyCode(startKey)
+        if startCode then
+            keyText.Text = startKey
+            self:BindKeyCode(startCode)
+        end
+    end
+
+    -- Register so LoadConfig can restore the keybind row's display text
+    _G.BSMTConfigElements[configKey] = {
+        Type     = "ToggleKeybind",
+        toggle   = self,
+        instance = keyText,
+    }
+
+    -- Click → listen for next key press
+    local isListening = false
+    local listenConn  = nil
+
+    keybindRow.MouseButton1Click:Connect(function()
+        if isListening then return end
+        isListening  = true
+        keyText.Text = "Press key..."
+
+        if listenConn then listenConn:Disconnect() end
+        listenConn = UserInputService.InputBegan:Connect(function(input, _gpe)
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if input.KeyCode.Name == "Unknown" then return end
+
+            isListening = false
+            listenConn:Disconnect()
+            listenConn = nil
+
+            local keyName = input.KeyCode.Name
+            keyText.Text  = keyName
+            self:BindKeyCode(input.KeyCode)
+
+            -- Store in config data (persisted when user clicks Save Config)
+            _G.BSMTConfigData[configKey] = keyName
+
+            Library.Notification(label .. " → " .. keyName, "success", 2)
+        end)
+    end)
+
+    -- Right-click → clear binding
+    keybindRow.MouseButton2Click:Connect(function()
+        if listenConn then listenConn:Disconnect() listenConn = nil end
+        isListening = false
+        keyText.Text = "None"
+        self:BindKeyCode(nil)
+        _G.BSMTConfigData[configKey] = ""
+        Library.Notification(label .. " cleared", "info", 2)
+    end)
+
+    self._keybindRow = keybindRow
+end
+
 function windowHandler:SetKeybind(keybind)
     local function getMatchingKeyCodeFromName(name)
         if not name then return end
@@ -3755,29 +4108,8 @@ function windowHandler:SetKeybind(keybind)
             end
         end
     end
-    
-    local keyCode = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightControl
-    self.CurrentKeybind = keyCode
-    
-    if self._keybindConnection then
-        self._keybindConnection:Disconnect()
-    end
-    
-    self._keybindConnection = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-        if gameProcessedEvent then return end
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode == self.CurrentKeybind then
-                local bg = self.Instance:FindFirstChild("Background")
-                if bg then
-                    bg.Visible = not bg.Visible
-                end
-            end
-        end
-    end)
-    
-    if Library.Notification then
-        Library.Notification("UI Toggle set to: " .. keyCode.Name, "info", 2)
-    end
+    -- Just update CurrentKeybind. The permanent listener in Library.new reads it live.
+    self.CurrentKeybind = getMatchingKeyCodeFromName(keybind) or Enum.KeyCode.RightShift
 end
 
 -- Config Tab
@@ -3928,26 +4260,57 @@ function windowHandler:ConfigTab()
     refreshAutoLoadDropdown()
     
     configSection:Title("UI Settings")
-    
-    local currentKeybindText = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
-    local keybindButton = configSection:Button("UI Keybind: " .. currentKeybindText, function()
-        Library.Notification("Press any key...", "info", 2)
-        
-        local connection
-        connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if input.UserInputType == Enum.UserInputType.Keyboard then
+    configSection:Label("UI Visibility Keybind")
+
+    -- Build a proper keybind row that updates window.CurrentKeybind when pressed
+    do
+        local keybindRow     = originalElements.Keybind:Clone()
+        local keyText        = keybindRow.BoxBackground.InnerBox.KeyText
+        local boxBackground  = keybindRow.BoxBackground
+        local keybindTextLbl = keybindRow.KeybindText
+
+        keybindTextLbl.Text  = "Show / Hide UI"
+        keybindTextLbl.Size  = UDim2.new(0, 0, 1, 0)
+        keyText.Text         = self.CurrentKeybind and self.CurrentKeybind.Name or "RightShift"
+
+        keybindRow.Parent = configSection.ElementToParentChildren
+        local origSize = boxBackground.AbsoluteSize
+        boxBackground.BoxAspect:Destroy()
+        boxBackground.Size  = UDim2.fromOffset(origSize.X, origSize.Y)
+        keybindTextLbl.Size = UDim2.new(1, -(origSize.X + 4), 1, 0)
+
+        local isListening = false
+        local listenConn  = nil
+
+        keybindRow.MouseButton1Click:Connect(function()
+            if isListening then return end
+            isListening      = true
+            keyText.Text     = "Press key..."
+
+            if listenConn then listenConn:Disconnect() end
+            listenConn = UserInputService.InputBegan:Connect(function(input, _gpe)
+                if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                if input.KeyCode.Name == "Unknown" then return end
+
+                isListening = false
+                listenConn:Disconnect()
+                listenConn = nil
+
                 local keyName = input.KeyCode.Name
-                
                 self:SetKeybind(keyName)
-                
-                keybindButton.Instance.ButtonText.Text = "UI Keybind: " .. keyName
-                
-                Library.Notification("Keybind changed to: " .. keyName, "success", 2)
-                
-                connection:Disconnect()
-            end
+                keyText.Text = keyName
+                Library.Notification("UI keybind → " .. keyName, "success", 2)
+            end)
         end)
-    end)
+
+        -- Right-click resets to RightShift
+        keybindRow.MouseButton2Click:Connect(function()
+            if listenConn then listenConn:Disconnect() listenConn = nil end
+            isListening = false
+            self:SetKeybind("RightShift")
+            keyText.Text = "RightShift"
+        end)
+    end
     
     return configTab
 end
@@ -3965,6 +4328,9 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
     
+    -- Never create a second button if one already exists.
+    if self.MobileButton then return self.MobileButton end
+
     if not forceCreate then
         local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
         if not isMobile then
@@ -3972,30 +4338,34 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
         end
     end
     
+    local btnSize = math.clamp(math.round(64 * mobileScale), 56, 96)
     local ToggleGui = Instance.new("ScreenGui")
     local Toggle = Instance.new("ImageButton")
     local UICorner = Instance.new("UICorner")
     
-    ToggleGui.Name = "ToggleGui_Cerberus"
+    ToggleGui.Name = "ToggleGui_BSMT"
     ToggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ToggleGui.IgnoreGuiInset = true
+    ToggleGui.DisplayOrder = 100  -- always tappable, above everything
     ToggleGui.ResetOnSpawn = false
     ToggleGui.Parent = game:GetService("CoreGui")
     
     Toggle.Name = "Toggle"
     Toggle.Parent = ToggleGui
     Toggle.BackgroundColor3 = Color3.fromRGB(40, 41, 52)
-    Toggle.BackgroundTransparency = 0.3
+    Toggle.BackgroundTransparency = 0.15
     Toggle.Position = UDim2.new(0, 20, 0.4, 0)
-    Toggle.Size = UDim2.new(0, 60, 0, 60)
+    Toggle.Size = UDim2.new(0, btnSize, 0, btnSize)
     Toggle.Image = imageId or "rbxassetid://11435586663"
     Toggle.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    Toggle.ImageTransparency = 0.05
     Toggle.Active = true
     Toggle.AutoButtonColor = true
     Toggle.Visible = true
-    
-    UICorner.CornerRadius = UDim.new(0.25, 0)
+
+    UICorner.CornerRadius = UDim.new(0.28, 0)
     UICorner.Parent = Toggle
+    Stroke(Toggle, Theme.Accent, 2, 0.1)
     
     local dragging = false
     local dragInput, dragStart, startPos
@@ -4042,8 +4412,9 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
             bg.Visible = not bg.Visible
             
             local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-            local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)})
-            local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 60, 0, 60)})
+            local pressed = math.round(btnSize * 0.85)
+            local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, pressed, 0, pressed)})
+            local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, btnSize, 0, btnSize)})
             
             shrink:Play()
             shrink.Completed:Connect(function()
@@ -4143,5 +4514,11 @@ function windowHandler:AutoMobileButton(imageId)
     
     return isMobile
 end
+
+_G.Notify = function(message, notifType, duration)
+	return Library.Notification(message, notifType, duration)
+end
+
+_G.BSMTSettings = Library.Settings
 
 return Library
