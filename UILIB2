@@ -136,8 +136,11 @@ local viewPortSize = workspace.CurrentCamera.ViewportSize
 -- ║   BSMT – Responsive Design System            ║
 -- ╚══════════════════════════════════════════════╝
 
+-- Touch present but no real mouse => treat as a mobile/touch device.
 local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 local scaleFactor = math.clamp(viewPortSize.Y / 1080, 0.6, 1.4)
+-- Mobile gets a stronger scale boost so every control is comfortably tappable.
+local mobileScale = isMobile and math.clamp(viewPortSize.Y / 900, 1.15, 1.9) or 1.0
 
 -- Theme: single source of truth for all colours
 local Theme = {
@@ -152,22 +155,58 @@ local Theme = {
 	Text            = Color3.fromRGB(255, 255, 255),
 	TextMuted       = Color3.fromRGB(109, 110, 119),
 	TextDim         = Color3.fromRGB(139, 141, 147),
+	Stroke          = Color3.fromRGB(58, 60, 78),  -- subtle element/window outline
+	Shadow          = Color3.fromRGB(0, 0, 0),
 }
 
--- Metrics: fixed on desktop, scaled up on mobile for readability
-local mobileScale = isMobile and math.clamp(viewPortSize.Y / 1080, 1.0, 1.6) or 1.0
+-- Returns `base` on desktop (look unchanged) and a larger, touch-friendly
+-- value on mobile that is never smaller than `minMobile`.
+local function metric(base, minMobile)
+	if isMobile then
+		return math.max(minMobile or 0, math.round(base * mobileScale))
+	end
+	return base
+end
+
+-- Metrics: compact on desktop, enlarged for touch on mobile
 local M = {
-	ElementH    = math.round(18 * mobileScale),
-	ToggleH     = math.round(14 * mobileScale),
-	SliderH     = math.round(32 * mobileScale),
-	TabH        = math.round(27.5 * mobileScale),
-	SectionHead = math.round(22 * mobileScale),
-	TextSize    = isMobile and math.clamp(math.round(14 * mobileScale), 14, 20) or 14,
-	TextSizeSm  = isMobile and math.clamp(math.round(13 * mobileScale), 12, 18) or 13,
-	Pad         = math.round(4 * mobileScale),
-	PadLg       = math.round(5 * mobileScale),
+	ElementH    = metric(18, 32),
+	ToggleH     = metric(14, 28),
+	SliderH     = metric(32, 52),
+	TabH        = metric(28, 44),
+	SectionHead = metric(22, 32),
+	TextSize    = isMobile and math.clamp(math.round(15 * mobileScale), 16, 22) or 14,
+	TextSizeSm  = isMobile and math.clamp(math.round(13 * mobileScale), 14, 20) or 13,
+	Pad         = metric(4, 6),
+	PadLg       = metric(5, 8),
 	Border      = 1,
+	Corner      = isMobile and 6 or 5,  -- rounded-corner radius for elements
 }
+
+-- Tab-rail / page split. These are complementary so the rail and the active
+-- page never overlap (previously they did on mobile, clipping content).
+local TAB_W  = isMobile and 0.34 or 0.225
+local PAGE_W = 1 - TAB_W
+
+-- ── Cosmetic helpers ────────────────────────────────────────────────────────
+-- Round an instance's corners.
+local function Round(inst, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or M.Corner)
+	corner.Parent = inst
+	return corner
+end
+
+-- Add a thin outline around an instance.
+local function Stroke(inst, color, thickness, transparency)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or Theme.Stroke
+	stroke.Thickness = thickness or 1
+	stroke.Transparency = transparency or 0
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = inst
+	return stroke
+end
 
 -- Lightweight factory: Create(className, props) returns configured instance
 local function Create(className, props)
@@ -191,6 +230,13 @@ end
 local function IsPrimaryInput(input)
 	return input.UserInputType == Enum.UserInputType.MouseButton1
 		or (isMobile and input.UserInputType == Enum.UserInputType.Touch)
+end
+
+-- True when a drag/press should END. On touch devices the release event fires
+-- as `Touch`, not `MouseButton1`, so drag handlers must accept both or they leak.
+local function IsReleaseInput(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch
 end
 
 local originalElements = {}
@@ -312,7 +358,9 @@ local function createOriginialElements()
 		backgroundAspectRatioConstraint.AspectRatio = 1.531
 		
 		backgroundUICorner.Name = "BackgroundUICorner"
+		backgroundUICorner.CornerRadius = UDim.new(0, isMobile and 12 or 8)
 		backgroundUICorner.Parent = background
+		Stroke(background, Theme.Stroke, isMobile and 2 or 1, 0.15)
 		
 		pagesFolder.Name = "Pages"
 		pagesFolder.Parent = background
@@ -329,7 +377,14 @@ local function createOriginialElements()
 		heading.TextSize = 14.000
 
 		headingUICorner.Name = "HeadingUICorner"
+		headingUICorner.CornerRadius = UDim.new(0, isMobile and 12 or 8)
 		headingUICorner.Parent = heading
+
+		local headingGradient = Instance.new("UIGradient")
+		headingGradient.Name = "HeadingGradient"
+		headingGradient.Rotation = 90
+		headingGradient.Color = ColorSequence.new(Color3.fromRGB(48, 49, 62), Color3.fromRGB(36, 37, 48))
+		headingGradient.Parent = heading
 
 		buttonHolder.Name = "ButtonHolder"
 		buttonHolder.Parent = heading
@@ -442,13 +497,11 @@ local function createOriginialElements()
 		tabs.BackgroundColor3 = Color3.fromRGB(31, 31, 43)
 		tabs.BorderSizePixel = 0
 		tabs.Position = UDim2.new(0, 5, 1, -5)
-		-- Mobile: make tabs wider so text/icons aren't clipped
-	if isMobile then
-		tabs.Size = UDim2.new(0.3, 0, 1, -15)
-	else
-		tabs.Size = UDim2.new(0.225, 0, 1, -15)
-	end
+		-- Rail width is complementary to the page width so they never overlap.
+		tabs.Size = UDim2.new(TAB_W, 0, 1, -15)
 		tabs.ScrollBarThickness = 0
+		Round(tabs, M.Corner + 1)
+		Stroke(tabs, Theme.Stroke, 1, 0.35)
 
 		tabsUIListLayout.Name = "TabsUIListLayout"
 		tabsUIListLayout.Parent = tabs
@@ -461,7 +514,7 @@ local function createOriginialElements()
 		pageLogo.BackgroundTransparency = 1.000
 		pageLogo.BorderSizePixel = 0
 		pageLogo.Position = UDim2.new(1, -10, 1, -5)
-		pageLogo.Size = UDim2.new(0.774999976, -25, 1, -15)
+		pageLogo.Size = UDim2.new(PAGE_W, -25, 1, -15)
 		pageLogo.ZIndex = 0
 		pageLogo.Image = "rbxassetid://11435586663"
 		pageLogo.ImageColor3 = Color3.fromRGB(109, 110, 119)
@@ -531,7 +584,9 @@ local function createOriginialElements()
 		tabSeperatorUICorner.CornerRadius = UDim.new(0, 2)
 		tabSeperatorUICorner.Name = "TabSeperatorUICorner"
 		tabSeperatorUICorner.Parent = tabSeperator
-		
+
+		Round(tab, M.Corner)
+
 		return tab
 	end
 	
@@ -549,7 +604,7 @@ local function createOriginialElements()
 		page.BorderSizePixel = 0
 		page.Position = UDim2.new(1, -10, 1, -5)
 		page.Visible = false
-		page.Size = UDim2.new(.775,-25,0,0)
+		page.Size = UDim2.new(PAGE_W,-25,0,0)
 
 		leftScrollingFrame.Name = "LeftScrollingFrame"
 		leftScrollingFrame.Active = true
@@ -580,6 +635,13 @@ local function createOriginialElements()
 		rightScrollingFrameList.Padding = UDim.new(0,7)
 		rightScrollingFrameList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		rightScrollingFrameList.Parent = rightScrollingFrame
+
+			-- Mobile: collapse to a single, full-width column for readability.
+			if isMobile then
+				leftScrollingFrame.Size = UDim2.new(1, 0, 1, 0)
+				rightScrollingFrame.Visible = false
+				rightScrollingFrame.Size = UDim2.new(0, 0, 1, 0)
+			end
 		
 		return page
 	end
@@ -601,12 +663,20 @@ local function createOriginialElements()
 		section.BorderSizePixel = 0
 		section.Size = UDim2.new(1, 0, 0, 200)
 		section.ClipsDescendants = true
+		Round(section, M.Corner + 2)
+		Stroke(section, Theme.Stroke, 1, 0.25)
 
 		heading.Name = "Heading"
 		heading.Parent = section
 		heading.BackgroundColor3 = Color3.fromRGB(40, 41, 52)
 		heading.BorderSizePixel = 0
 		heading.Size = UDim2.new(1, 0, 0, M.SectionHead)
+
+		local sectionHeadingGradient = Instance.new("UIGradient")
+		sectionHeadingGradient.Name = "SectionHeadingGradient"
+		sectionHeadingGradient.Rotation = 90
+		sectionHeadingGradient.Color = ColorSequence.new(Color3.fromRGB(48, 49, 62), Color3.fromRGB(36, 37, 48))
+		sectionHeadingGradient.Parent = heading
 
 		headingSeperator.Name = "HeadingSeperator"
 		headingSeperator.Parent = heading
@@ -762,6 +832,10 @@ local function createOriginialElements()
 		labelBackgroundPadding.PaddingLeft = UDim.new(0, 1)
 		labelBackgroundPadding.PaddingRight = UDim.new(0, 1)
 		labelBackgroundPadding.PaddingTop = UDim.new(0, 1)
+
+		Round(label, M.Corner)
+		Round(labelBackground, M.Corner - 1)
+		Round(labelText, M.Corner - 1)
 		
 		return label
 	end
@@ -853,6 +927,10 @@ local function createOriginialElements()
 		toggleImageCorner.Name = "ToggleImageCorner"
 		toggleImageCorner.CornerRadius = UDim.new(.5,0)
 		toggleImageCorner.Parent = toggleImage
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(centerBox, M.Corner - 1)
 		
 		return toggle
 	end
@@ -994,6 +1072,7 @@ local function createOriginialElements()
 		dropdown.BorderSizePixel = 0
 		dropdown.ClipsDescendants = true
 		dropdown.Size = UDim2.new(1, 0, 0, M.ElementH)
+		Round(dropdown, M.Corner)
 
 		dropdownButton.Name = "DropdownButton"
 		dropdownButton.Parent = dropdown
@@ -1214,6 +1293,10 @@ local function createOriginialElements()
 		emptySliderBackground.Size = UDim2.new(1, 0, 1, 0)
 		emptySliderBackground.ZIndex = 0
 
+		Round(sliderBackground, M.Corner)
+		Round(sliderInnerBackground, M.Corner - 1)
+		Round(emptySliderBackground, M.Corner - 1)
+
 		slider.Name = "Slider"
 		slider.Parent = sliderInnerBackground
 		slider.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
@@ -1255,6 +1338,7 @@ local function createOriginialElements()
 		searchBar.BorderSizePixel = 0
 		searchBar.ClipsDescendants = true
 		searchBar.Size = UDim2.new(1, 0, 0, M.ElementH)
+		Round(searchBar, M.Corner)
 
 		searchBarFrame.Name = "SearchBarFrame"
 		searchBarFrame.Parent = searchBar
@@ -1449,6 +1533,10 @@ local function createOriginialElements()
 		keyText.Text = "N/A"
 		keyText.TextColor3 = Color3.fromRGB(139, 141, 147)
 		keyText.TextSize = M.TextSize
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(keyText, M.Corner - 1)
 		
 		return keybind
 	end
@@ -1527,7 +1615,11 @@ local function createOriginialElements()
 		textBoxText.Text = ""
 		textBoxText.TextXAlignment = Enum.TextXAlignment.Left
 		textBoxText.TextColor3 = Color3.fromRGB(139, 141, 147)
-		textBoxText.TextSize = 14.000
+		textBoxText.TextSize = M.TextSize
+
+		Round(boxBackground, M.Corner)
+		Round(innerBox, M.Corner - 1)
+		Round(textBoxText, M.Corner - 1)
 		
 		return textBox
 	end
@@ -2183,7 +2275,17 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 	minimizedLongBarOriginialSize = Vector2.new(heading.AbsoluteSize.X, heading.AbsoluteSize.Y)
 	minimizedShortBarOriginialSize = Vector2.new(heading.AbsoluteSize.X / 6 * 2, heading.AbsoluteSize.Y)
 	originialWindowSize = background.AbsoluteSize
-	
+
+	-- Touch devices have no keyboard, so the show/hide keybind is unreachable.
+	-- Always give mobile users a draggable on-screen toggle button.
+	if isMobile then
+		task.defer(function()
+			if window and not window.MobileButton then
+				window:CreateMobileButton(backgroundImageId, true)
+			end
+		end)
+	end
+
 	return window
 end
 
@@ -2200,8 +2302,8 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 	local tabCloseTween = TweenService:Create(tabInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {BackgroundTransparency = 1})
 	local tabSeperatorOpenTween = TweenService:Create(tabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(.035,1)})
 	local tabSeperatorCloseTween = TweenService:Create(tabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,1)})
-	local pageOpenTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(0.774999976, -25, 1, -15)})	
-	local pageCloseTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(.775,-25,0,0)})
+	local pageOpenTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W, -25, 1, -15)})	
+	local pageCloseTween = TweenService:Create(pageInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W,-25,0,0)})
 	local logoShowTween = TweenService:Create(self.Instance.Background.Holder.PageLogo, TweenInfo.new(.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = .65})
 	local logoHideTween = TweenService:Create(self.Instance.Background.Holder.PageLogo, TweenInfo.new(.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {ImageTransparency = 1})
 	
@@ -2241,7 +2343,7 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 			for foundTabInstance, tabInfo in pairs(self.TabInfo) do
 				if foundTabInstance ~= tabInstance then
 					if tabInfo.isOpen then
-						local foundPageCloseTween = TweenService:Create(tabInfo.Page, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(.775,-25,0,0)})
+						local foundPageCloseTween = TweenService:Create(tabInfo.Page, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.new(PAGE_W,-25,0,0)})
 						local foundTabCloseTween = TweenService:Create(foundTabInstance, TweenInfo.new(.25, Enum.EasingStyle.Linear), {BackgroundTransparency = 1})
 						local foundTabSeperatorCloseTween = TweenService:Create(foundTabInstance.TabSeperator, TweenInfo.new(.25, Enum.EasingStyle.Linear), {Size = UDim2.fromScale(0,1)})
 
@@ -2344,7 +2446,7 @@ function windowHandler:Tab(tabName: string, tabImage: string): table
 		tabInstance.TabSeperator.Size = UDim2.fromScale(.035,1)
 		tabInstance.BackgroundTransparency = .25
 		pageInstance.Visible = true
-		pageInstance.Size = UDim2.new(0.774999976, -25, 1, -15)
+		pageInstance.Size = UDim2.new(PAGE_W, -25, 1, -15)
 		self.TabInfo[tabInstance].isOpen = true
 	end
 	
@@ -2388,6 +2490,11 @@ function tabHandler:Section(sectionTitle: string) -- Add option to make on left 
 	end
 	
 	local function getShorterScrollingFrame()
+		-- Mobile uses a single full-width column, so every section goes there.
+		if isMobile then
+			return self.ElementToParentChildren:FindFirstChild("LeftScrollingFrame")
+		end
+
 		local pageScrollingFrame
 		local pageScrollingFrameContentSizeY = math.huge
 		
@@ -2446,7 +2553,7 @@ function elementHandler:Title(titleName: string)
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = titleName or "N/A"
 	textParams.Font = titleInstance.TitleText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 
 	local requiredTextSpace = TextService:GetTextBoundsAsync(textParams) + textSpaceOffset
@@ -2473,7 +2580,7 @@ function titleHandler:ChangeText(newText: string): nil
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = newText or "N/A"
 	textParams.Font = self.Instance.TitleText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredTextSpace = TextService:GetTextBoundsAsync(textParams) + textSpaceOffset
@@ -2680,7 +2787,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = tostring(maximumValue) or "N/A"
 	textParams.Font = sliderInstance.TextGrouping.NumberText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredNumberTextSpace = TextService:GetTextBoundsAsync(textParams)
@@ -2722,7 +2829,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 		sliderConnection = mouse.Move:Connect(onMouseMoved)
 		
 		endInputConnection = UserInputService.InputEnded:Connect(function(input, gameProcessedEvent)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				sliderConnection:Disconnect()
 				endInputConnection:Disconnect()
 			end
@@ -3079,7 +3186,7 @@ function elementHandler:TextBox(textBoxName:string, callback): table
 	textParams.Text = placeholderText
 	textParams.Width = 10000
 	textParams.Font = textBoxText.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	
 	local requiredPlaceholderTextSpace = TextService:GetTextBoundsAsync(textParams)
 	
@@ -3162,7 +3269,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 	local textParams = Instance.new("GetTextBoundsParams")
 	textParams.Text = "255"
 	textParams.Font = heading.ColorWheelName.FontFace
-	textParams.Size = 14
+	textParams.Size = M.TextSize
 	textParams.Width = 10000
 	
 	local requiredRgbTextSize = TextService:GetTextBoundsAsync(textParams)
@@ -3235,7 +3342,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 		end)
 
 		inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				inputEndedConnection:Disconnect()
 				mouseMovedConnection:Disconnect()
 			end
@@ -3252,7 +3359,7 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 		end)
 
 		inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if IsReleaseInput(input) then
 				inputEndedConnection:Disconnect()
 				mouseMovedConnection:Disconnect()
 			end
@@ -3333,6 +3440,10 @@ notificationHandler.__index = notificationHandler
 local notificationContainer
 local activeNotifications = {}
 local notificationYOffset = 10
+-- Wider, taller toasts on mobile so they're legible; classic 300px on desktop.
+local notifWidth  = isMobile and math.floor(math.clamp(viewPortSize.X * 0.42, 300, 460)) or 300
+local notifHeight = isMobile and 74 or 60
+local notifMargin = 10
 
 local function createNotificationContainer()
 	if notificationContainer then return notificationContainer end
@@ -3341,6 +3452,7 @@ local function createNotificationContainer()
 	container.Name = "BSMTNotifications"
 	container.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	container.IgnoreGuiInset = true
+	container.DisplayOrder = 50  -- sit above the main window
 	container.Parent = game:GetService("CoreGui")
 	
 	return container
@@ -3363,8 +3475,8 @@ local function createNotification()
 
 	notification.Name = "Notification"
 	notification.BackgroundTransparency = 1
-	notification.Size = UDim2.new(0, 300, 0, 60)
-	notification.Position = UDim2.new(1, 320, 0, 10)  -- starts off-screen right, enters from top-right
+	notification.Size = UDim2.new(0, notifWidth, 0, notifHeight)
+	notification.Position = UDim2.new(1, notifWidth + 20, 0, 10)  -- starts off-screen right, enters from top-right
 
 	background.Name = "Background"
 	background.Parent = notification
@@ -3400,19 +3512,19 @@ local function createNotification()
 	icon.Parent = contentHolder
 	icon.AnchorPoint = Vector2.new(0, 0.5)
 	icon.BackgroundTransparency = 1
-	icon.Position = UDim2.new(0, 10, 0.5, 0)
-	icon.Size = UDim2.new(0, 24, 0, 24)
+	icon.Position = UDim2.new(0, 12, 0.5, 0)
+	icon.Size = UDim2.new(0, isMobile and 30 or 24, 0, isMobile and 30 or 24)
 	icon.Image = "rbxassetid://11454041890"
 
 	textLabel.Name = "TextLabel"
 	textLabel.Parent = contentHolder
 	textLabel.BackgroundTransparency = 1
-	textLabel.Position = UDim2.new(0, 44, 0, 0)
-	textLabel.Size = UDim2.new(1, -54, 1, 0)
+	textLabel.Position = UDim2.new(0, isMobile and 54 or 44, 0, 0)
+	textLabel.Size = UDim2.new(1, isMobile and -64 or -54, 1, 0)
 	textLabel.Font = Enum.Font.Gotham
 	textLabel.Text = "Notification"
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	textLabel.TextSize = 14
+	textLabel.TextSize = isMobile and 18 or 14
 	textLabel.TextWrapped = true
 	textLabel.TextXAlignment = Enum.TextXAlignment.Left
 	textLabel.TextYAlignment = Enum.TextYAlignment.Center
@@ -3420,8 +3532,9 @@ local function createNotification()
 	textPadding.Parent = textLabel
 	textPadding.PaddingRight = UDim.new(0, 10)
 
-	uiCorner.CornerRadius = UDim.new(0, 4)
+	uiCorner.CornerRadius = UDim.new(0, isMobile and 8 or 6)
 	uiCorner.Parent = background
+	Stroke(background, Theme.Stroke, 1, 0.2)
 
 	progressBar.Name = "ProgressBar"
 	progressBar.Parent = contentHolder
@@ -3453,7 +3566,7 @@ local function updateNotificationPositions()
 			local moveTween = TweenService:Create(
 				notif.Instance,
 				TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-				{Position = UDim2.new(1, -310, 0, currentY)}
+				{Position = UDim2.new(1, -(notifWidth + notifMargin), 0, currentY)}
 			)
 			moveTween:Play()
 			currentY = currentY + notif.Instance.AbsoluteSize.Y + 10
@@ -3515,7 +3628,7 @@ function Library.Notification(message, notifType, duration)
 	local slideInTween = TweenService:Create(
 		notificationInstance,
 		TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{Position = UDim2.new(1, -310, 0, 10)}
+		{Position = UDim2.new(1, -(notifWidth + notifMargin), 0, 10)}
 	)
 	slideInTween:Play()
 	
@@ -3542,7 +3655,7 @@ function notificationHandler:Dismiss()
 	local slideOutTween = TweenService:Create(
 		self.Instance,
 		TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-		{Position = UDim2.new(1, 320, 0, self.Instance.Position.Y.Offset)}
+		{Position = UDim2.new(1, notifWidth + 20, 0, self.Instance.Position.Y.Offset)}
 	)
 	
 	slideOutTween:Play()
@@ -3792,7 +3905,7 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     toggleInstance.ToggleText.Text = toggleName or "N/A"
     toggleInstance.Parent = self.ElementToParentChildren
     toggleInstance.ToggleText.Size = UDim2.new(1,-(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset),1,0)
-    toggleInstance.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
+    toggleInstance.ToggleText.Position = UDim2.fromOffset(toggleInstance.BoxBackground.AbsoluteSize.X + textOffset,0)
     
     if toggle.Enabled then
         toggleInstance.BoxBackground.InnerBox.CenterBox.ToggleImage.ToggleImageCorner.CornerRadius = UDim.new(0, 0)
@@ -4215,6 +4328,9 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
     
+    -- Never create a second button if one already exists.
+    if self.MobileButton then return self.MobileButton end
+
     if not forceCreate then
         local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
         if not isMobile then
@@ -4222,6 +4338,7 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
         end
     end
     
+    local btnSize = math.clamp(math.round(64 * mobileScale), 56, 96)
     local ToggleGui = Instance.new("ScreenGui")
     local Toggle = Instance.new("ImageButton")
     local UICorner = Instance.new("UICorner")
@@ -4229,23 +4346,26 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
     ToggleGui.Name = "ToggleGui_BSMT"
     ToggleGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ToggleGui.IgnoreGuiInset = true
+    ToggleGui.DisplayOrder = 100  -- always tappable, above everything
     ToggleGui.ResetOnSpawn = false
     ToggleGui.Parent = game:GetService("CoreGui")
     
     Toggle.Name = "Toggle"
     Toggle.Parent = ToggleGui
     Toggle.BackgroundColor3 = Color3.fromRGB(40, 41, 52)
-    Toggle.BackgroundTransparency = 0.3
+    Toggle.BackgroundTransparency = 0.15
     Toggle.Position = UDim2.new(0, 20, 0.4, 0)
-    Toggle.Size = UDim2.new(0, 60, 0, 60)
+    Toggle.Size = UDim2.new(0, btnSize, 0, btnSize)
     Toggle.Image = imageId or "rbxassetid://11435586663"
     Toggle.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    Toggle.ImageTransparency = 0.05
     Toggle.Active = true
     Toggle.AutoButtonColor = true
     Toggle.Visible = true
-    
-    UICorner.CornerRadius = UDim.new(0.25, 0)
+
+    UICorner.CornerRadius = UDim.new(0.28, 0)
     UICorner.Parent = Toggle
+    Stroke(Toggle, Theme.Accent, 2, 0.1)
     
     local dragging = false
     local dragInput, dragStart, startPos
@@ -4292,8 +4412,9 @@ function windowHandler:CreateMobileButton(imageId, forceCreate)
             bg.Visible = not bg.Visible
             
             local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-            local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)})
-            local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, 60, 0, 60)})
+            local pressed = math.round(btnSize * 0.85)
+            local shrink = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, pressed, 0, pressed)})
+            local grow = TweenService:Create(Toggle, tweenInfo, {Size = UDim2.new(0, btnSize, 0, btnSize)})
             
             shrink:Play()
             shrink.Completed:Connect(function()
@@ -4394,15 +4515,10 @@ function windowHandler:AutoMobileButton(imageId)
     return isMobile
 end
 
--- ╔══════════════════════════════════════════════╗
--- ║  Global shorthand: notify(msg) or            ║
--- ║  notify(msg, "success"/"error"/"warning")    ║
--- ╚══════════════════════════════════════════════╝
 _G.Notify = function(message, notifType, duration)
 	return Library.Notification(message, notifType, duration)
 end
 
--- Expose settings globally for scripters
 _G.BSMTSettings = Library.Settings
 
 return Library
