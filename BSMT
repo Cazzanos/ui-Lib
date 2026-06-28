@@ -239,6 +239,81 @@ local function IsReleaseInput(input)
 		or input.UserInputType == Enum.UserInputType.Touch
 end
 
+-- ── getgenv() flag binding ───────────────────────────────────────────────────
+-- Any element created with a `flag` reads its initial value from getgenv()[flag]
+-- (if present), writes back on every change, and is kept visually in sync when
+-- the script mutates getgenv()[flag] externally (two-way). Falls back to _G when
+-- the executor has no getgenv.
+local genv = (getgenv and getgenv()) or _G
+-- shared across reloads so a single watcher always sees the live element set
+local flagged = _G.BSMTFlagged or {}  -- [element] = { flag = string, read = function()->value, sync = function(value) }
+_G.BSMTFlagged = flagged
+
+local function readFlag(flag)
+	if flag == nil then return nil end
+	return genv[flag]
+end
+
+local function writeFlag(flag, value)
+	if flag ~= nil then genv[flag] = value end
+end
+
+-- Write a value to the element's bound flag and mark it as our own write so the
+-- watcher won't treat it as an external change and bounce it back.
+local function pushFlag(element, value)
+	local info = flagged and flagged[element]
+	if info then
+		genv[info.flag] = value
+		info.last = value
+	end
+end
+
+-- Register an element for external→UI sync. `read` returns the element's current
+-- value; `sync` applies a value visually WITHOUT writing back or firing callbacks.
+local function registerFlag(element, flag, read, sync)
+	if flag == nil then return end
+	flagged[element] = { flag = flag, read = read, sync = sync, last = readFlag(flag) }
+end
+
+local function unregisterFlag(element)
+	flagged[element] = nil
+end
+
+local function colorsEqual(a, b)
+	return typeof(a) == "Color3" and typeof(b) == "Color3"
+		and math.abs(a.R - b.R) < 0.004 and math.abs(a.G - b.G) < 0.004 and math.abs(a.B - b.B) < 0.004
+end
+
+-- single shared watcher: cheap poll that pushes external getgenv changes into the UI
+if not _G.BSMTFlagWatcher then
+_G.BSMTFlagWatcher = true
+task.spawn(function()
+	while true do
+		task.wait(0.15)
+		for element, info in pairs(flagged) do
+			local ok, current = pcall(info.read)
+			if ok then
+				local desired = genv[info.flag]
+				if desired ~= nil then
+					local changedExternally
+					if typeof(desired) == "Color3" then
+						changedExternally = not colorsEqual(desired, current)
+					else
+						changedExternally = desired ~= current
+					end
+					-- only react when the value differs from what the UI last pushed,
+					-- so our own writes don't bounce back
+					if changedExternally and desired ~= info.last then
+						pcall(info.sync, desired)
+					end
+				end
+				info.last = genv[info.flag]
+			end
+		end
+	end
+end)
+end
+
 local originalElements = {}
 -- Add Tween Dictionary with format Tweens.ElementType.TweenName to ignore repetitive variables
 
@@ -2769,7 +2844,7 @@ function dropdownHandler:ChangeText(newText: string)
 	self.IdentifierText = newText
 end
 
-function elementHandler:Slider(sliderName: string, callback, maximumValue: number, minimumValue: number): table
+function elementHandler:Slider(sliderName: string, callback, maximumValue: number, minimumValue: number, flag: string?): table
 	local slider = setmetatable({}, sliderHandler) -- MAKE RIGHT CLICK AND BAR GOES TO MID
 	local sliderInstance = originalElements.Slider:Clone()
 	local isMouseDown = false
@@ -2822,6 +2897,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 			sliderInstance.TextGrouping.NumberText.Text = math.round(sliderValue)
 			slider._currentValue = sliderValue
 			_G.BSMTConfigData[slider.ConfigIdentifier] = sliderValue
+			pushFlag(slider, sliderValue)
 			callback(sliderValue)
 		end
 		
@@ -2844,8 +2920,11 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 				local absSize = sliderBar.Parent.EmptySliderBackground.AbsoluteSize
 				local percentOfBarFilled = enteredNum / absSize.X
 				sliderValue = enteredNum
+				slider._currentValue = sliderValue
 				sliderInstance.TextGrouping.NumberText.Text = math.round(sliderValue)
 				sliderBar.Size = UDim2.new((sliderValue - minimumValue) / maxMinRange,0,1,0)
+				_G.BSMTConfigData[slider.ConfigIdentifier] = sliderValue
+				pushFlag(slider, sliderValue)
 				callback(sliderValue)
 			else
 				sliderInstance.TextGrouping.NumberText.Text = "ERR"
@@ -2880,6 +2959,30 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 		slider._currentValue = _G.BSMTConfigData[sliderConfigKey]
 	end
 
+	-- getgenv() flag binding: pull the initial value from getgenv()[flag] if set
+	if flag ~= nil then
+		local fv = tonumber(readFlag(flag))
+		if fv ~= nil then
+			slider._currentValue = math.clamp(fv, minimumValue, maximumValue)
+		end
+	end
+
+	-- visual-only setter (no callback, no flag writeback) used by the external watcher
+	local function syncVisual(v)
+		v = math.clamp(tonumber(v) or minimumValue, minimumValue, maximumValue)
+		sliderValue = v
+		slider._currentValue = v
+		local pct = (v - minimumValue) / maxMinRange
+		sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
+		sliderInstance.TextGrouping.NumberText.Text = math.round(v)
+	end
+
+	if flag ~= nil then
+		registerFlag(slider, flag, function() return slider._currentValue end, syncVisual)
+		writeFlag(flag, slider._currentValue)
+		if flagged[slider] then flagged[slider].last = slider._currentValue end
+	end
+
 	-- Internal helper used by LoadConfig
 	function slider:SetValue(v)
 		v = math.clamp(tonumber(v) or self._minValue, self._minValue, self._maxValue)
@@ -2888,6 +2991,7 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 		sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
 		sliderInstance.TextGrouping.NumberText.Text = math.round(v)
 		_G.BSMTConfigData[self.ConfigIdentifier] = v
+		pushFlag(self, v)
 		callback(v)
 	end
 
@@ -3245,7 +3349,7 @@ function elementHandler:TextBox(textBoxName:string, callback): table
 end
 
 --Fix toggle img it's imported as orange make it white
-function elementHandler:ColorWheel(colorWheelName: string, callback): table
+function elementHandler:ColorWheel(colorWheelName: string, callback, flag: string?): table
 	local colorWheel = setmetatable({}, colorWheelHandler)
 	local colorWheelInstance = originalElements.ColorWheel:Clone()
 	
@@ -3275,15 +3379,39 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 	local requiredRgbTextSize = TextService:GetTextBoundsAsync(textParams)
 	
 	local hue, saturation, value = 0, 0, 1
-	
+
+	-- getgenv() flag binding: seed HSV from the bound Color3 if one is set
+	if flag ~= nil and typeof(readFlag(flag)) == "Color3" then
+		hue, saturation, value = readFlag(flag):ToHSV()
+	end
+
 	local function updateVisuals()
 		local color = Color3.fromHSV(hue, saturation, value)
-		
+
 		valueHolder.ColorSample.BackgroundColor3 = color
 		colorInputHolder.Red.BoxBackground.InnerBox.ColorValue.Text = math.round(color.R * 255)
 		colorInputHolder.Green.BoxBackground.InnerBox.ColorValue.Text = math.round(color.G * 255)
 		colorInputHolder.Blue.BoxBackground.InnerBox.ColorValue.Text = math.round(color.B * 255)
+		pushFlag(colorWheel, color)
 		callback(color)
+	end
+
+	-- visual-only apply (no callback / no flag writeback) for the external watcher + SetColor
+	local function syncVisual(color)
+		if typeof(color) ~= "Color3" then return end
+		hue, saturation, value = color:ToHSV()
+		if wheelRadius then
+			local x, y = toCartesian(saturation, math.rad(hue * 360))
+			selector.Position = UDim2.new(.5, -x * wheelRadius, .5, y * wheelRadius)
+		end
+		local trackX = slider.AbsoluteSize.X - sliderBar.AbsoluteSize.X
+		if trackX > 0 then
+			sliderBar.Position = UDim2.new(0, math.clamp(value * trackX, 0, trackX), 0, 0)
+		end
+		valueHolder.ColorSample.BackgroundColor3 = color
+		colorInputHolder.Red.BoxBackground.InnerBox.ColorValue.Text = math.round(color.R * 255)
+		colorInputHolder.Green.BoxBackground.InnerBox.ColorValue.Text = math.round(color.G * 255)
+		colorInputHolder.Blue.BoxBackground.InnerBox.ColorValue.Text = math.round(color.B * 255)
 	end
 	
 	local function updateSlider()
@@ -3428,7 +3556,29 @@ function elementHandler:ColorWheel(colorWheelName: string, callback): table
 	end
 	
 	wheelRadius = wheel.AbsoluteSize.X / 2
-	
+
+	-- Public: apply a colour from code (updates visuals, fires callback, writes flag)
+	function colorWheel:SetColor(color)
+		if typeof(color) ~= "Color3" then return end
+		syncVisual(color)
+		pushFlag(self, color)
+		callback(color)
+	end
+
+	function colorWheel:GetColor()
+		return Color3.fromHSV(hue, saturation, value)
+	end
+
+	-- getgenv() flag binding: reflect the bound colour now + keep in sync externally
+	if flag ~= nil then
+		registerFlag(colorWheel, flag, function() return Color3.fromHSV(hue, saturation, value) end, syncVisual)
+		syncVisual(Color3.fromHSV(hue, saturation, value))
+		local initial = Color3.fromHSV(hue, saturation, value)
+		writeFlag(flag, initial)
+		if flagged[colorWheel] then flagged[colorWheel].last = initial end
+		callback(initial)
+	end
+
 	return colorWheel
 end
 
@@ -3873,9 +4023,10 @@ function toggleHandler:Apply(value, runCallback)
     if self.ConfigIdentifier then
         _G.BSMTConfigData[self.ConfigIdentifier] = self.Enabled
     end
+    pushFlag(self, self.Enabled)
 end
 
-function elementHandler:Toggle(toggleName, callback, configIdentifier)
+function elementHandler:Toggle(toggleName, callback, configIdentifier, flag)
     local toggle = setmetatable({}, toggleHandler)
     local toggleInstance = originalElements.Toggle:Clone()
     local textOffset = 4
@@ -3893,7 +4044,20 @@ function elementHandler:Toggle(toggleName, callback, configIdentifier)
     if _G.BSMTConfigData[toggle.ConfigIdentifier] ~= nil then
         toggle.Enabled = _G.BSMTConfigData[toggle.ConfigIdentifier]
     end
-    
+
+    -- getgenv() flag binding
+    toggle.Flag = flag
+    if flag ~= nil then
+        if type(readFlag(flag)) == "boolean" then
+            toggle.Enabled = readFlag(flag)
+        end
+        registerFlag(toggle, flag, function() return toggle.Enabled end, function(v)
+            if type(v) == "boolean" then toggle:Apply(v, false) end
+        end)
+        writeFlag(flag, toggle.Enabled)
+        if flagged[toggle] then flagged[toggle].last = toggle.Enabled end
+    end
+
     if self.Type == "SearchBar" then
         self.ChildedElementsInfo[toggleInstance] = toggle
     end
@@ -3965,6 +4129,7 @@ function toggleHandler:BindKeyCode(keyCode)
         if self.ConfigIdentifier then
             _G.BSMTConfigData[self.ConfigIdentifier] = self.Enabled
         end
+        pushFlag(self, self.Enabled)
 
         -- Fire the user's callback with the new state
         if cb then cb(self.Enabled) end
