@@ -594,11 +594,9 @@ local function createOriginialElements()
 		tabs.BorderSizePixel = 0
 		tabs.Position = UDim2.new(0, 0, 1, 0)
 		tabs.ScrollBarThickness = 0
-		if isMobile then
-			tabs.Size = UDim2.new(0.3, 0, 1, 0)
-		else
-			tabs.Size = UDim2.new(0.225, 0, 1, 0)
-		end
+		-- Sidebar fixed at 0.225 so the right-anchored 0.775 page never overlaps it
+		-- (a wider mobile sidebar caused the left column to render over the tabs)
+		tabs.Size = UDim2.new(0.225, 0, 1, 0)
 
 		tabsUIListLayout.Name = "TabsUIListLayout"
 		tabsUIListLayout.Parent = tabs
@@ -614,11 +612,7 @@ local function createOriginialElements()
 		sidebarLine.AnchorPoint = Vector2.new(0, 0)
 		sidebarLine.BackgroundColor3 = Theme.Track
 		sidebarLine.BorderSizePixel = 0
-		if isMobile then
-			sidebarLine.Position = UDim2.new(0.3, 0, 0, 0)
-		else
-			sidebarLine.Position = UDim2.new(0.225, 0, 0, 0)
-		end
+		sidebarLine.Position = UDim2.new(0.225, 0, 0, 0)
 		sidebarLine.Size = UDim2.new(0, 1, 1, 0)
 
 		pageLogo.Name = "PageLogo"
@@ -2417,10 +2411,27 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 
 	heading.Title.Text = windowName or "BSMT"
 	parentProtected(windowInstance)
+	-- Background image removed
+	window._backgroundImageId = ""
+
 	-- Responsive window sizing
 	if isMobile then
-		background.Size = UDim2.new(0.85, 0, 0.60, 0)
-		background.Position = UDim2.new(0.5, 0, 0.5, 0)
+		-- Drop the desktop aspect-ratio lock BEFORE sizing, otherwise it distorts the
+		-- mobile size and the absolutes we read below are wrong (window off-screen / wrong size).
+		local arc = background:FindFirstChild("BackgroundUIAspectRatioConstraint")
+		if arc then arc:Destroy() end
+
+		background.Size = UDim2.new(0.92, 0, 0.72, 0)
+		game:GetService("RunService").Heartbeat:Wait()  -- let absolutes settle at the new size
+
+		-- Center from the viewport (anchor 0.5,0.5) — no stale AbsolutePosition read and no
+		-- +36 topbar offset (IgnoreGuiInset is on), so it can never land off-screen.
+		local vp = workspace.CurrentCamera.ViewportSize
+		background.Position = UDim2.new(0, math.round(vp.X / 2), 0, math.round(vp.Y / 2))
+
+		holder.Size     = UDim2.new(0, holder.AbsoluteSize.X, 0, holder.AbsoluteSize.Y)
+		holder.Position = UDim2.new(0, 0, 0, heading.AbsoluteSize.Y)
+		heading.Size    = UDim2.new(1, 0, 0, heading.AbsoluteSize.Y)
 	else
 		background.Size = UDim2.fromOffset(background.AbsoluteSize.X, background.AbsoluteSize.Y)
 		if width then
@@ -2429,15 +2440,13 @@ function Library.new(windowName: string, constrainToScreen: boolean?, width: num
 		if height then
 			background.Size = UDim2.fromOffset(background.AbsoluteSize.X, height)
 		end
-	end
 
-	-- Background image removed
-	window._backgroundImageId = ""
-	background.Position = UDim2.new(0, background.AbsolutePosition.X + background.AbsoluteSize.X / 2, 0, background.AbsolutePosition.Y + background.AbsoluteSize.Y / 2 + 36)
-	background.BackgroundUIAspectRatioConstraint:Destroy()
-	holder.Size = UDim2.new(0,holder.AbsoluteSize.X,0,holder.AbsoluteSize.Y)
-	holder.Position = UDim2.new(0,0,0,heading.AbsoluteSize.Y)
-	heading.Size = UDim2.new(1,0,0,heading.AbsoluteSize.Y)
+		background.Position = UDim2.new(0, background.AbsolutePosition.X + background.AbsoluteSize.X / 2, 0, background.AbsolutePosition.Y + background.AbsoluteSize.Y / 2 + 36)
+		background.BackgroundUIAspectRatioConstraint:Destroy()
+		holder.Size = UDim2.new(0,holder.AbsoluteSize.X,0,holder.AbsoluteSize.Y)
+		holder.Position = UDim2.new(0,0,0,heading.AbsoluteSize.Y)
+		heading.Size = UDim2.new(1,0,0,heading.AbsoluteSize.Y)
+	end
 	buttonHolder.Size = UDim2.new(0,buttonHolder.ButtonHolderList.AbsoluteContentSize.X + buttonHolder.ButtonHolderPadding.PaddingRight.Offset,.9,0)
 	heading.Title.Size = UDim2.new(1,-(buttonHolder.ButtonHolderList.AbsoluteContentSize.X + buttonHolder.ButtonHolderPadding.PaddingRight.Offset + 4),.9,0)
 	minimizedLongBarOriginialSize = Vector2.new(heading.AbsoluteSize.X, heading.AbsoluteSize.Y)
@@ -3065,8 +3074,15 @@ function elementHandler:Slider(sliderName: string, callback, maximumValue: numbe
 	sliderInstance.TextGrouping.NumberText.Text = math.round(slider._currentValue)
 	sliderInstance.TextGrouping.NumberText.Size = UDim2.new(0,math.max(requiredErrorTextSpace.X, requiredNumberTextSpace.X) + textPixelOffset,1,0)
 
-	-- Restore bar position from saved config value
+	-- Restore bar position. Re-read the flag here too, so a global set AFTER the
+	-- slider was created (e.g. getgenv().fovsize = 90 later in the script) still
+	-- shows up immediately rather than waiting on the poll.
 	task.defer(function()
+		if flag and genv[flag] ~= nil then
+			slider._currentValue = math.clamp(tonumber(genv[flag]) or slider._currentValue, minimumValue, maximumValue)
+			sliderInstance.TextGrouping.NumberText.Text = math.round(slider._currentValue)
+			if genvWatchers[flag] then genvWatchers[flag].last = genv[flag] end
+		end
 		if slider._currentValue ~= minimumValue then
 			local pct = (slider._currentValue - minimumValue) / maxMinRange
 			sliderBar.Size = UDim2.new(0, math.max(minimumClosePixelsLeft, math.round(pct * sliderBar.Parent.EmptySliderBackground.AbsoluteSize.X)), 1, 0)
